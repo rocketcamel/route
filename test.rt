@@ -1,0 +1,5 @@
+gateway traefik-gateway
+
+git.lucalise.ca -> gitolite:22 {
+    namespace git
+}

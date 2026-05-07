@@ -1,0 +1,10 @@
+[package]
+name = "k3s-util"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+console = "0.16.3"
+thiserror = "2.0.18"
+thiserror-ext = "0.3.0"
