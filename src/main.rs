@@ -7,7 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
-use crate::ast::{Lexer, Token};
+use crate::ast::{Lexer, Parser as RtParser, Token, TokenKind};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -26,15 +26,9 @@ fn run() -> crate::error::Result<()> {
     match &cli.command {
         Commands::GenerateRoutes => {
             let bytes = std::fs::read(PathBuf::from("./test.rt"))?;
-            let mut lexer = Lexer::new(&bytes);
-            loop {
-                let token = lexer.next_token()?;
-                println!("{token:?}");
-
-                if token == Token::Eof {
-                    break;
-                }
-            }
+            let mut parser = RtParser::new(&bytes)?;
+            let ast = parser.parse()?;
+            println!("{ast:?}")
         }
     }
 

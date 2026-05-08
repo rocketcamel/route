@@ -6,7 +6,7 @@ use thiserror_ext::{Box, Construct};
 pub enum ErrorKind {
     #[error("io error")]
     Io(#[from] std::io::Error),
-    #[error("could not parse: {value} into a token: line {line}:{col}")]
+    #[error("could not parse: {value}: line {line}:{col}")]
     Parse {
         value: String,
         line: usize,

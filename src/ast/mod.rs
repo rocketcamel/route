@@ -1,16 +1,31 @@
-use crate::error::{Error, Result};
+mod ast;
+mod parse;
+
+use crate::{
+    ast::ast::Span,
+    error::{Error, Result},
+};
+
+pub use parse::Parser;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Token<'a> {
+    pub kind: TokenKind,
+    pub text: &'a str,
+    pub span: Span,
+}
 
 #[allow(unused)]
-#[derive(PartialEq, Debug)]
-pub enum Token {
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum TokenKind {
     // symbols
     Arrow,
     LBrace,
     RBrace,
     Colon,
-    Identifier(String),
+    Identifier,
     Keyword(Kw),
-    Number(usize),
+    Number,
     // whitespace
     Whitespace,
     Comment,
@@ -21,7 +36,7 @@ pub enum Token {
 }
 
 #[allow(unused)]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Kw {
     Namespace,
     Gateway,
@@ -67,18 +82,10 @@ impl<'a> Lexer<'a> {
         return self.peek();
     }
 
-    fn read_while(&mut self, pred: fn(u8) -> bool) -> &'a [u8] {
-        let start = self.pos;
-        while pred(self.peek()) {
-            self.bump();
-        }
-        &self.source[start..self.pos]
-    }
-
-    fn read_kind(&mut self) -> Token {
+    fn read_kind(&mut self) -> TokenKind {
         let mut c = self.peek();
         if c == 0 {
-            return Token::Eof;
+            return TokenKind::Eof;
         }
 
         match c {
@@ -87,26 +94,36 @@ impl<'a> Lexer<'a> {
                 c = self.peek();
                 if c == b'>' {
                     self.bump();
-                    return Token::Arrow;
+                    return TokenKind::Arrow;
                 } else {
-                    return Token::Error;
+                    return TokenKind::Error;
                 }
             }
             b'{' => {
                 self.bump();
-                Token::LBrace
+                TokenKind::LBrace
             }
             b'}' => {
                 self.bump();
-                Token::RBrace
+                TokenKind::RBrace
             }
             b':' => {
                 self.bump();
-                Token::Colon
+                TokenKind::Colon
+            }
+            mut c if c.is_ascii_digit() => {
+                loop {
+                    c = self.bump_peek();
+
+                    if !(c.is_ascii_digit() || c == b'.' || c == b'_') {
+                        break;
+                    }
+                }
+                TokenKind::Number
             }
             mut c if is_alpha(c) => {
-                println!("alpha");
                 let start = self.pos;
+                println!("alpha");
                 loop {
                     c = self.bump_peek();
 
@@ -116,12 +133,10 @@ impl<'a> Lexer<'a> {
                 }
                 let value = str::from_utf8(&self.source[start..self.pos]).unwrap();
                 match value {
-                    "namespace" => return Token::Keyword(Kw::Namespace),
-                    "gateway" => return Token::Keyword(Kw::Gateway),
-                    _ => {}
+                    "gateway" => TokenKind::Keyword(Kw::Gateway),
+                    "namespace" => TokenKind::Keyword(Kw::Namespace),
+                    _ => TokenKind::Identifier,
                 }
-
-                Token::Identifier(value.to_string())
             }
             c if is_whitespace(c) => {
                 println!("whitespace");
@@ -129,34 +144,48 @@ impl<'a> Lexer<'a> {
                 if c == b'\n' {
                     self.line += 1
                 }
-                Token::Whitespace
+                TokenKind::Whitespace
             }
-            _ => Token::Error,
+            _ => TokenKind::Error,
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Token> {
+    pub fn next_token(&mut self) -> Result<Token<'a>> {
         let mut start = self.pos;
         let mut initial_line = self.line;
         let mut kind = self.read_kind();
 
-        while kind == Token::Whitespace {
+        while kind == TokenKind::Whitespace {
             start = self.pos;
             initial_line = self.line;
             kind = self.read_kind();
         }
 
-        if kind == Token::Error {
+        if kind == TokenKind::Error {
             let value = str::from_utf8(&self.source[start..=self.pos]).unwrap();
-            return Err(Error::parse(value, initial_line + 1, self.pos - start));
+            return Err(Error::parse(
+                format!("{value} into a token"),
+                initial_line + 1,
+                self.pos - start,
+            ));
         }
+        let text = str::from_utf8(&self.source[start..self.pos]).unwrap();
+        println!("token: {text}");
 
-        Ok(kind)
+        Ok(Token {
+            kind,
+            text,
+            span: Span {
+                start: start,
+                end: self.pos,
+                line: self.line,
+            },
+        })
     }
 }
 
 fn is_alpha(c: u8) -> bool {
-    return c.is_ascii_alphanumeric() || c == b'.' || c == b'-' || c == b'_';
+    return c.is_ascii_alphabetic() || c == b'.' || c == b'-' || c == b'_';
 }
 
 fn is_whitespace(c: u8) -> bool {
