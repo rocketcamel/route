@@ -1,10 +1,7 @@
 use crate::{
     ast::{
         Kw, Lexer, Token, TokenKind,
-        ast::{
-            Ast, Block, Gateway, Identifier, Property, PropertyKind, Route, ServiceTarget, Span,
-            Statement,
-        },
+        ast::{Ast, Block, Gateway, Property, PropertyKind, Route, ServiceTarget, Span, Statement},
     },
     error::{Error, Result},
 };
@@ -47,7 +44,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Ast> {
+    pub fn parse(&mut self) -> Result<Ast<'a>> {
         let mut statements = vec![];
 
         while !self.current_is(TokenKind::Eof) {
@@ -66,7 +63,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_statement_node(&mut self) -> Result<Statement> {
+    fn parse_statement_node(&mut self) -> Result<Statement<'a>> {
         match self.current_token.kind {
             TokenKind::Keyword(Kw::Gateway) => self.parse_gateway_node(),
             TokenKind::Keyword(Kw::Namespace) => self.parse_property(),
@@ -79,7 +76,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_route(&mut self) -> Result<Statement> {
+    fn parse_route(&mut self) -> Result<Statement<'a>> {
         let url = self.expect(TokenKind::Identifier)?;
         let start = url.span;
 
@@ -90,10 +87,7 @@ impl<'a> Parser<'a> {
         let end = properties.span.end;
 
         Ok(Statement::Route(Route {
-            hostname: Identifier {
-                value: url.text.to_string(),
-                span: url.span,
-            },
+            hostname: url,
             properties,
             target: service_target,
             span: Span {
@@ -104,7 +98,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_block(&mut self) -> Result<Block> {
+    fn parse_block(&mut self) -> Result<Block<'a>> {
         let start = self.current_token.span;
         self.expect(TokenKind::LBrace)?;
 
@@ -128,15 +122,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_service_target(&mut self) -> Result<ServiceTarget> {
+    fn parse_service_target(&mut self) -> Result<ServiceTarget<'a>> {
         let token = self.expect(TokenKind::Identifier)?;
         let start = token.span;
         println!("{token:?}");
-
-        let service = Identifier {
-            value: token.text.to_string(),
-            span: token.span,
-        };
 
         self.expect(TokenKind::Colon)?;
 
@@ -150,7 +139,7 @@ impl<'a> Parser<'a> {
         })?;
 
         Ok(ServiceTarget {
-            service,
+            service: token,
             port,
             span: Span {
                 start: start.start,
@@ -160,7 +149,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_property(&mut self) -> Result<Statement> {
+    fn parse_property(&mut self) -> Result<Statement<'a>> {
         let start = self.current_token.span;
 
         let kind = match self.current_token.kind {
@@ -179,27 +168,25 @@ impl<'a> Parser<'a> {
 
         Ok(Statement::Property(Property {
             kind,
-            value: Identifier {
-                value: token.text.to_string(),
-                span: token.span,
+            token,
+            span: Span {
+                start: start.start,
+                end: token.span.end,
+                line: start.line,
             },
-            span: token.span,
         }))
     }
 
-    fn parse_gateway_node(&mut self) -> Result<Statement> {
+    fn parse_gateway_node(&mut self) -> Result<Statement<'a>> {
         let start = self.current_token.span;
         self.consume()?;
-        let name = self.expect(TokenKind::Identifier)?;
+        let token = self.expect(TokenKind::Identifier)?;
 
         Ok(Statement::Gateway(Gateway {
-            name: Identifier {
-                value: name.text.to_string(),
-                span: name.span,
-            },
+            token,
             span: Span {
                 start: start.start,
-                end: name.span.end,
+                end: token.span.end,
                 line: start.line,
             },
         }))
