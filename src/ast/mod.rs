@@ -2,45 +2,11 @@ mod ast;
 mod parse;
 
 use crate::{
-    ast::ast::Span,
+    ast::ast::{Span, Token, TokenKind},
     error::{Error, Result},
 };
 
 pub use parse::Parser;
-
-#[derive(Debug, Clone, Copy)]
-pub struct Token<'a> {
-    pub kind: TokenKind,
-    pub text: &'a str,
-    pub span: Span,
-}
-
-#[allow(unused)]
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub enum TokenKind {
-    // symbols
-    Arrow,
-    LBrace,
-    RBrace,
-    Colon,
-    Identifier,
-    Keyword(Kw),
-    Number,
-    // whitespace
-    Whitespace,
-    Comment,
-    // line endings
-    Eof,
-    Newline,
-    Error,
-}
-
-#[allow(unused)]
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub enum Kw {
-    Namespace,
-    Gateway,
-}
 
 pub struct Lexer<'a> {
     source: &'a [u8],
@@ -111,6 +77,10 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 TokenKind::Colon
             }
+            b'=' => {
+                self.bump();
+                TokenKind::Equals
+            }
             mut c if c.is_ascii_digit() => {
                 loop {
                     c = self.bump_peek();
@@ -123,7 +93,6 @@ impl<'a> Lexer<'a> {
             }
             mut c if is_alpha(c) => {
                 let start = self.pos;
-                println!("alpha");
                 loop {
                     c = self.bump_peek();
 
@@ -133,8 +102,11 @@ impl<'a> Lexer<'a> {
                 }
                 let value = str::from_utf8(&self.source[start..self.pos]).unwrap();
                 match value {
-                    "gateway" => TokenKind::Keyword(Kw::Gateway),
-                    "namespace" => TokenKind::Keyword(Kw::Namespace),
+                    "true" => TokenKind::True,
+                    "false" => TokenKind::False,
+                    "nil" => TokenKind::Nil,
+                    "tcp" => TokenKind::Tcp,
+                    "let" => TokenKind::Let,
                     _ => TokenKind::Identifier,
                 }
             }

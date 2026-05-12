@@ -1,5 +1,11 @@
-gateway traefik-gateway
+let gateway traefik-gateway
 
-git.lucalise.ca -> gitolite:22 {
-    namespace git
+git.lucalise.ca -> cgit:22 {
+  name = cgit
+  namespace = git
+}
+
+tcp git.lucalise.ca -> gitolite:22 {
+  name = gitolite
+  namespace = git
 }

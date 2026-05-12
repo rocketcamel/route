@@ -1,7 +1,10 @@
 use crate::{
     ast::{
-        Kw, Lexer, Token, TokenKind,
-        ast::{Ast, Block, Gateway, Property, PropertyKind, Route, ServiceTarget, Span, Statement},
+        Lexer, Token, TokenKind,
+        ast::{
+            Assign, Ast, Block, Expression, Route, RouteKind, ServiceTarget, SimpleExpression,
+            Span, Statement,
+        },
     },
     error::{Error, Result},
 };
@@ -9,22 +12,37 @@ use crate::{
 pub struct Parser<'a> {
     pub lexer: Lexer<'a>,
     pub current_token: Token<'a>,
+    pub lookahead_token: Token<'a>,
+}
+
+fn display<'a>(token: Token<'a>) -> String {
+    let kind = token.kind;
+
+    if kind == TokenKind::Identifier {
+        token.text.to_string()
+    } else if kind == TokenKind::Error {
+        format!("error {}", token.text)
+    } else {
+        format!("{kind:?}")
+    }
 }
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a [u8]) -> Result<Self> {
         let mut lexer = Lexer::new(source);
         let current_token = lexer.next_token()?;
+        let lookahead_token = lexer.next_token()?;
         Ok(Self {
             lexer,
             current_token,
+            lookahead_token,
         })
     }
 
     fn consume(&mut self) -> Result<Token<'a>> {
         let old_token = self.current_token;
-        let token = self.lexer.next_token()?;
-        self.current_token = token;
+        self.current_token = self.lookahead_token;
+        self.lookahead_token = self.lexer.next_token()?;
         Ok(old_token)
     }
 
@@ -32,85 +50,60 @@ impl<'a> Parser<'a> {
         return self.current_token.kind == kind;
     }
 
+    fn lookahead_is(&self, kind: TokenKind) -> bool {
+        return self.lookahead_token.kind == kind;
+    }
+
+    fn expected_but(&self, kind: &str) -> Error {
+        return Error::parse(
+            format!(
+                "expected {}, but got {:?}",
+                kind,
+                display(self.current_token)
+            ),
+            self.current_token.span.line,
+            self.current_token.span.start,
+        );
+    }
+
     fn expect(&mut self, kind: TokenKind) -> Result<Token<'a>> {
         if self.current_is(kind) {
             return self.consume();
         } else {
-            Err(Error::parse(
-                format!("expected {:?}, got {:?}", kind, self.current_token.kind),
-                self.current_token.span.line,
-                self.current_token.span.start,
-            ))
+            return Err(self.expected_but(&display(self.current_token)));
         }
+    }
+
+    fn skip_current(&mut self) -> Result<()> {
+        while self.current_is(TokenKind::Whitespace) {
+            self.consume()?;
+        }
+        Ok(())
     }
 
     pub fn parse(&mut self) -> Result<Ast<'a>> {
-        let mut statements = vec![];
-
-        while !self.current_is(TokenKind::Eof) {
-            statements.push(self.parse_statement_node()?);
-        }
-
-        Ok(Ast {
-            block: Block {
-                body: statements,
-                span: Span {
-                    start: 0,
-                    end: self.lexer.len,
-                    line: 0,
-                },
-            },
-        })
+        let block = self.parse_block_node()?;
+        Ok(Ast { block })
     }
 
-    fn parse_statement_node(&mut self) -> Result<Statement<'a>> {
-        match self.current_token.kind {
-            TokenKind::Keyword(Kw::Gateway) => self.parse_gateway_node(),
-            TokenKind::Keyword(Kw::Namespace) => self.parse_property(),
-            TokenKind::Identifier => self.parse_route(),
-            _ => Err(Error::parse(
-                format!("unexpected token {:?}", self.current_token.kind),
-                self.current_token.span.line,
-                self.current_token.span.start,
-            )),
-        }
-    }
-
-    fn parse_route(&mut self) -> Result<Statement<'a>> {
-        let url = self.expect(TokenKind::Identifier)?;
-        let start = url.span;
-
-        self.expect(TokenKind::Arrow)?;
-
-        let service_target = self.parse_service_target()?;
-        let properties = self.parse_block()?;
-        let end = properties.span.end;
-
-        Ok(Statement::Route(Route {
-            hostname: url,
-            properties,
-            target: service_target,
-            span: Span {
-                start: start.start,
-                end,
-                line: start.line,
-            },
-        }))
-    }
-
-    fn parse_block(&mut self) -> Result<Block<'a>> {
+    fn parse_block_node(&mut self) -> Result<Block<'a>> {
         let start = self.current_token.span;
-        self.expect(TokenKind::LBrace)?;
 
         let mut body = vec![];
-        while self.current_token.kind != TokenKind::RBrace
-            && self.current_token.kind != TokenKind::Eof
-        {
-            body.push(self.parse_property()?);
+        while self.current_token.kind != TokenKind::Eof {
+            self.skip_current()?;
+
+            if self.current_is(TokenKind::Tcp) {
+                println!("parsing tcp node");
+                body.push(self.parse_tcp_node()?)
+            } else if self.lookahead_is(TokenKind::Equals) {
+                body.push(self.parse_assign_node()?);
+            } else {
+                return Err(self.expected_but("statement"));
+            }
         }
 
         let end = self.current_token.span;
-        self.expect(TokenKind::RBrace)?;
 
         Ok(Block {
             body,
@@ -122,24 +115,61 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_service_target(&mut self) -> Result<ServiceTarget<'a>> {
-        let token = self.expect(TokenKind::Identifier)?;
-        let start = token.span;
-        println!("{token:?}");
+    fn parse_tcp_node(&mut self) -> Result<Statement<'a>> {
+        let start = self.current_token.span;
 
+        self.expect(TokenKind::Tcp)?;
+        let fqdn = self.expect(TokenKind::Identifier)?;
+        self.expect(TokenKind::Arrow)?;
+
+        let service_target = self.parse_service_node()?;
+        let block_start = self.current_token.span;
+        self.expect(TokenKind::LBrace)?;
+
+        let mut properties = vec![];
+        while self.current_token.kind != TokenKind::RBrace
+            || self.current_token.kind != TokenKind::Eof
+        {
+            properties.push(self.parse_assign_node()?)
+        }
+        let end = self.current_token.span;
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(Statement::Route(Route {
+            kind: RouteKind::TCP,
+            hostname: fqdn,
+            target: service_target,
+            properties: Block {
+                body: properties,
+                span: Span {
+                    start: block_start.start,
+                    end: end.end,
+                    line: block_start.line,
+                },
+            },
+            span: Span {
+                start: start.start,
+                end: end.end,
+                line: start.line,
+            },
+        }))
+    }
+
+    fn parse_service_node(&mut self) -> Result<ServiceTarget<'a>> {
+        let start = self.current_token.span;
+        let service = self.expect(TokenKind::Identifier)?;
         self.expect(TokenKind::Colon)?;
-
         let port_token = self.expect(TokenKind::Number)?;
-        let port = port_token.text.parse::<usize>().map_err(|_| {
+        let port = port_token.text.parse::<usize>().map_err(|e| {
             Error::parse(
-                format!("invalid port number: {}", port_token.text),
+                format!("invalid number: {e:?}"),
                 port_token.span.line,
                 port_token.span.start,
             )
         })?;
 
         Ok(ServiceTarget {
-            service: token,
+            service,
             port,
             span: Span {
                 start: start.start,
@@ -149,46 +179,52 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_property(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
+    fn parse_assign_node(&mut self) -> Result<Statement<'a>> {
+        let identifier = self.expect(TokenKind::Identifier)?;
+        let equals = self.expect(TokenKind::Equals)?;
+        let expression = self.parse_expression()?;
 
-        let kind = match self.current_token.kind {
-            TokenKind::Keyword(Kw::Namespace) => PropertyKind::Namespace,
-            _ => {
-                return Err(Error::parse(
-                    format!("unexpected property {:?}", self.current_token.text),
-                    start.line,
-                    start.start,
-                ));
-            }
-        };
-
-        self.consume()?;
-        let token = self.expect(TokenKind::Identifier)?;
-
-        Ok(Statement::Property(Property {
-            kind,
-            token,
-            span: Span {
-                start: start.start,
-                end: token.span.end,
-                line: start.line,
-            },
+        Ok(Statement::Assign(Assign {
+            identifier,
+            equals,
+            value: expression,
         }))
     }
 
-    fn parse_gateway_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-        self.consume()?;
-        let token = self.expect(TokenKind::Identifier)?;
-
-        Ok(Statement::Gateway(Gateway {
-            token,
-            span: Span {
-                start: start.start,
-                end: token.span.end,
-                line: start.line,
-            },
-        }))
+    fn parse_expression(&mut self) -> Result<Expression<'a>> {
+        match self.current_token.kind {
+            TokenKind::Nil => {
+                let token = self.expect(TokenKind::Nil)?;
+                Ok(Expression::Nil(SimpleExpression {
+                    token,
+                    span: token.span,
+                }))
+            }
+            TokenKind::Number => {
+                let token = self.expect(TokenKind::Number)?;
+                Ok(Expression::Number(SimpleExpression {
+                    token,
+                    span: token.span,
+                }))
+            }
+            TokenKind::Identifier => {
+                let token = self.expect(TokenKind::Identifier)?;
+                Ok(Expression::String(SimpleExpression {
+                    token,
+                    span: token.span,
+                }))
+            }
+            kind => {
+                if kind == TokenKind::True || kind == TokenKind::False {
+                    let token = self.consume()?;
+                    Ok(Expression::Boolean(SimpleExpression {
+                        token,
+                        span: token.span,
+                    }))
+                } else {
+                    return Err(self.expected_but(&display(self.current_token)));
+                }
+            }
+        }
     }
 }

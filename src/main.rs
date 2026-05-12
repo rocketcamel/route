@@ -7,7 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
-use crate::ast::{Lexer, Parser as RtParser, Token, TokenKind};
+use crate::ast::Parser as RtParser;
 
 #[derive(Parser, Debug)]
 pub struct Args {
