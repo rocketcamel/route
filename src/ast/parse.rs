@@ -2,8 +2,8 @@ use crate::{
     ast::{
         Lexer, Token, TokenKind,
         ast::{
-            Assign, Ast, Block, Expression, Route, RouteKind, ServiceTarget, SimpleExpression,
-            Span, Statement,
+            Assign, Ast, Block, Expression, LetStatement, Route, RouteKind, ServiceTarget,
+            SimpleExpression, Span, Statement, VarRoot,
         },
     },
     error::{Error, Result},
@@ -70,7 +70,7 @@ impl<'a> Parser<'a> {
         if self.current_is(kind) {
             return self.consume();
         } else {
-            return Err(self.expected_but(&display(self.current_token)));
+            return Err(self.expected_but(&format!("{kind:?}")));
         }
     }
 
@@ -96,8 +96,12 @@ impl<'a> Parser<'a> {
             if self.current_is(TokenKind::Tcp) {
                 println!("parsing tcp node");
                 body.push(self.parse_tcp_node()?)
+            } else if self.current_is(TokenKind::Let) {
+                body.push(self.parse_var_node()?);
             } else if self.lookahead_is(TokenKind::Equals) {
                 body.push(self.parse_assign_node()?);
+            } else if self.current_is(TokenKind::Identifier) {
+                body.push(self.parse_route_node()?);
             } else {
                 return Err(self.expected_but("statement"));
             }
@@ -115,6 +119,71 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_route_node(&mut self) -> Result<Statement<'a>> {
+        let start = self.current_token.span;
+        let fqdn = self.expect(TokenKind::Identifier)?;
+        self.expect(TokenKind::Arrow)?;
+        let service_target = self.parse_service_node()?;
+
+        let block_start = self.current_token.span;
+        self.expect(TokenKind::LBrace)?;
+
+        let mut properties = vec![];
+        while self.current_token.kind != TokenKind::RBrace
+            && self.current_token.kind != TokenKind::Eof
+        {
+            properties.push(self.parse_assign_node()?);
+        }
+        let end = self.current_token.span;
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(Statement::Route(Route {
+            kind: RouteKind::HTTP,
+            hostname: fqdn,
+            target: service_target,
+            properties: Block {
+                body: properties,
+                span: Span {
+                    start: block_start.start,
+                    end: end.end,
+                    line: block_start.line,
+                },
+            },
+            span: Span {
+                start: start.start,
+                end: end.end,
+                line: start.line,
+            },
+        }))
+    }
+
+    fn parse_var_node(&mut self) -> Result<Statement<'a>> {
+        let start = self.current_token.span;
+        let var = self.expect(TokenKind::Let)?;
+        let name = self.expect(TokenKind::Identifier)?;
+        self.expect(TokenKind::Equals)?;
+        let value = self.parse_expression()?;
+        let end = self.current_token.span;
+
+        Ok(Statement::Var(LetStatement {
+            var: VarRoot {
+                var,
+                name,
+                span: Span {
+                    start: start.start,
+                    end: name.span.end,
+                    line: start.line,
+                },
+            },
+            value,
+            span: Span {
+                start: start.start,
+                end: end.end,
+                line: start.line,
+            },
+        }))
+    }
+
     fn parse_tcp_node(&mut self) -> Result<Statement<'a>> {
         let start = self.current_token.span;
 
@@ -128,7 +197,7 @@ impl<'a> Parser<'a> {
 
         let mut properties = vec![];
         while self.current_token.kind != TokenKind::RBrace
-            || self.current_token.kind != TokenKind::Eof
+            && self.current_token.kind != TokenKind::Eof
         {
             properties.push(self.parse_assign_node()?)
         }

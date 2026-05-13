@@ -28,7 +28,7 @@ fn run() -> crate::error::Result<()> {
             let bytes = std::fs::read(PathBuf::from("./test.rt"))?;
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
-            println!("{ast:?}")
+            println!("{ast:#?}")
         }
     }
 

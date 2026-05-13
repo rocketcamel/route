@@ -1,4 +1,4 @@
-let gateway traefik-gateway
+let gateway = traefik-gateway
 
 git.lucalise.ca -> cgit:22 {
   name = cgit

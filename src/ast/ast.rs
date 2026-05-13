@@ -61,6 +61,20 @@ pub struct Route<'a> {
 }
 
 #[derive(Debug)]
+pub struct VarRoot<'a> {
+    pub var: Token<'a>,
+    pub name: Token<'a>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct LetStatement<'a> {
+    pub var: VarRoot<'a>,
+    pub value: Expression<'a>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
 pub struct SimpleExpression<'a> {
     pub token: Token<'a>,
     pub span: Span,
@@ -84,6 +98,7 @@ pub struct Assign<'a> {
 #[derive(Debug)]
 pub enum Statement<'a> {
     Assign(Assign<'a>),
+    Var(LetStatement<'a>),
     Route(Route<'a>),
 }
 
