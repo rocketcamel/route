@@ -1,5 +1,6 @@
 mod ast;
 mod error;
+mod treewalker;
 
 use std::path::PathBuf;
 
@@ -7,7 +8,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
-use crate::ast::Parser as RtParser;
+use crate::{ast::Parser as RtParser, treewalker::Renderer};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -28,7 +29,11 @@ fn run() -> crate::error::Result<()> {
             let bytes = std::fs::read(PathBuf::from("./test.rt"))?;
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
-            println!("{ast:#?}")
+            println!("{ast:#?}");
+            let mut renderer = Renderer::new();
+            let result = renderer.render(&ast);
+
+            println!("{result:?}")
         }
     }
 

@@ -249,14 +249,21 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assign_node(&mut self) -> Result<Statement<'a>> {
+        let start = self.current_token.span;
         let identifier = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
         let expression = self.parse_expression()?;
+        let end = self.current_token.span;
 
         Ok(Statement::Assign(Assign {
             identifier,
             equals,
             value: expression,
+            span: Span {
+                start: start.start,
+                end: end.end,
+                line: start.line,
+            },
         }))
     }
 

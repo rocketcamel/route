@@ -1,5 +1,8 @@
-mod ast;
+pub mod ast;
 mod parse;
+mod visit;
+
+pub use visit::Visitor;
 
 use crate::{
     ast::ast::{Span, Token, TokenKind},

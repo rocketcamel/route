@@ -93,6 +93,7 @@ pub struct Assign<'a> {
     pub identifier: Token<'a>,
     pub equals: Token<'a>,
     pub value: Expression<'a>,
+    pub span: Span,
 }
 
 #[derive(Debug)]
