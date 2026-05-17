@@ -18,10 +18,22 @@ pub struct Issue {
 }
 
 #[derive(Debug)]
+pub enum RouteResult {
+    HTTP(HTTPRoute),
+    TCP(TCPRoute),
+}
+
+#[derive(Debug)]
 pub struct ExecutionState {
     pub globals: HashMap<String, String>,
     pub scope: Scope,
     pub issues: Vec<Issue>,
+    pub routes: Vec<RouteResult>,
+}
+
+pub struct ExecutionResult {
+    pub http: Vec<HTTPRoute>,
+    pub tcp: Vec<TCPRoute>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -39,6 +51,16 @@ impl Value {
             Value::Number(n) => Some(n.to_string()),
             Value::Bool(n) => Some(n.to_string()),
             Value::Nil => None,
+        }
+    }
+}
+
+impl<'a> Statement<'a> {
+    pub fn span(&self) -> Span {
+        match self {
+            Statement::Assign(n) => n.span,
+            Statement::Var(n) => n.span,
+            Statement::Route(n) => n.span,
         }
     }
 }
@@ -190,7 +212,7 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
                 service,
                 port,
             };
-            println!("{route:?}");
+            state.routes.push(RouteResult::HTTP(route));
         }
         RouteKind::TCP => {
             let route = TCPRoute {
@@ -201,7 +223,7 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
                 service,
                 port,
             };
-            println!("{route:?}");
+            state.routes.push(RouteResult::TCP(route));
         }
     }
 }
@@ -248,13 +270,28 @@ pub fn create_state() -> ExecutionState {
             vars: HashMap::new(),
         },
         issues: Vec::new(),
+        routes: Vec::new(),
     }
 }
 
-pub fn execute(mut state: ExecutionState, ast: &Ast) {
+pub fn execute(mut state: ExecutionState, ast: &Ast) -> Result<ExecutionResult, Vec<Issue>> {
     visit_block(&mut state, &ast.block, false);
 
     if !state.issues.is_empty() {
-        eprintln!("{:?}", state.issues)
+        return Err(state.issues);
     }
+
+    let mut result_ok = ExecutionResult {
+        http: Vec::new(),
+        tcp: Vec::new(),
+    };
+
+    for route in state.routes {
+        match route {
+            RouteResult::HTTP(node) => result_ok.http.push(node),
+            RouteResult::TCP(node) => result_ok.tcp.push(node),
+        }
+    }
+
+    Ok(result_ok)
 }

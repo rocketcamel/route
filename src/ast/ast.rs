@@ -103,16 +103,6 @@ pub enum Statement<'a> {
     Route(Route<'a>),
 }
 
-impl<'a> Statement<'a> {
-    pub fn span(&self) -> Span {
-        match self {
-            Statement::Assign(n) => n.span,
-            Statement::Var(n) => n.span,
-            Statement::Route(n) => n.span,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Block<'a> {
     pub body: Vec<Statement<'a>>,

@@ -1,5 +1,6 @@
 mod ast;
 mod error;
+mod output;
 mod treewalker;
 
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use thiserror_ext::AsReport;
 
 use crate::{
     ast::Parser as RtParser,
+    output::render_output,
     treewalker::{create_state, execute},
 };
 
@@ -33,7 +35,16 @@ fn run() -> crate::error::Result<()> {
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
             println!("{ast:#?}");
-            execute(create_state(), &ast);
+
+            match execute(create_state(), &ast) {
+                Ok(result) => {
+                    let output = render_output(&result.http, &result.tcp);
+                    println!("{output}");
+                }
+                Err(issues) => {
+                    eprintln!("{:#?}", issues)
+                }
+            }
         }
     }
 
