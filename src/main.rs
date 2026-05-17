@@ -8,7 +8,10 @@ use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
-use crate::{ast::Parser as RtParser, treewalker::Renderer};
+use crate::{
+    ast::Parser as RtParser,
+    treewalker::{create_state, execute},
+};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -30,10 +33,7 @@ fn run() -> crate::error::Result<()> {
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
             println!("{ast:#?}");
-            let mut renderer = Renderer::new();
-            let result = renderer.render(&ast);
-
-            println!("{result:?}")
+            execute(create_state(), &ast);
         }
     }
 

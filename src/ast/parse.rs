@@ -166,7 +166,7 @@ impl<'a> Parser<'a> {
         let end = self.current_token.span;
 
         Ok(Statement::Var(LetStatement {
-            var: VarRoot {
+            root: VarRoot {
                 var,
                 name,
                 span: Span {

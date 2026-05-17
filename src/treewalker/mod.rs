@@ -1,38 +1,41 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
-use crate::ast::{
-    Visitor,
-    ast::{Ast, Expression, Route, RouteKind, Span, Statement, Token},
+use crate::ast::ast::{
+    Assign, Ast, Block, Expression, LetStatement, Route, RouteKind, ServiceTarget, Span, Statement,
 };
 
-pub struct Scope<'a, 'scope> {
-    up: Option<&'scope Scope<'a, 'scope>>,
+#[derive(Debug)]
+pub struct Scope {
+    up: Option<Box<Scope>>,
     root: bool,
-    vars: HashMap<&'a str, &'a str>,
-}
-
-pub struct ExecutionState {
-    pub globals: HashMap<String, String>,
+    vars: HashMap<String, Value>,
 }
 
 #[derive(Debug)]
-pub struct Issue<'a> {
-    why: &'a str,
+pub struct Issue {
+    why: String,
     span: Span,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Value<'a> {
-    Str(&'a str),
+#[derive(Debug)]
+pub struct ExecutionState {
+    pub globals: HashMap<String, String>,
+    pub scope: Scope,
+    pub issues: Vec<Issue>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum Value {
+    String(String),
     Number(i64),
     Bool(bool),
     Nil,
 }
 
-impl<'a> Value<'a> {
+impl Value {
     fn to_string(&self) -> Option<String> {
         match self {
-            Value::Str(n) => Some(n.to_string()),
+            Value::String(n) => Some(n.to_string()),
             Value::Number(n) => Some(n.to_string()),
             Value::Bool(n) => Some(n.to_string()),
             Value::Nil => None,
@@ -45,139 +48,213 @@ pub struct HTTPRoute {
     pub name: String,
     pub hostname: String,
     pub service: String,
+    pub port: usize,
     pub namespace: String,
     pub gateway: String,
+    pub entrypoint: String,
 }
 
 #[derive(Debug)]
 pub struct TCPRoute {
     pub name: String,
     pub service: String,
+    pub port: usize,
     pub namespace: String,
     pub gateway: String,
+    pub entrypoint: String,
 }
 
-pub struct Renderer<'a> {
-    pub output: String,
-    pub state: ExecutionState,
-    pub issues: Vec<Issue<'a>>,
+fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
+    state.issues.push(Issue {
+        why: why.into(),
+        span,
+    });
 }
 
-impl<'a> Renderer<'a> {
-    pub fn new() -> Self {
-        Self {
-            output: String::new(),
-            state: ExecutionState {
-                globals: HashMap::new(),
-            },
-            issues: Vec::new(),
+fn read_variable<'a>(state: &'a ExecutionState, var: &str) -> (Option<&'a Scope>, Option<Value>) {
+    let mut active = Some(&state.scope);
+
+    while let Some(scope) = active {
+        let value = scope.vars.get(var).cloned();
+        if let Some(value) = value {
+            return (active, Some(value));
         }
+        active = scope.up.as_deref()
     }
 
-    pub fn render(&mut self, ast: &Ast<'a>) -> (&[Issue<'a>], &str) {
-        self.visit_ast(ast);
-        (&self.issues, &self.output)
+    return (None, None);
+}
+
+fn write_variable(state: &mut ExecutionState, var: String, new: Value) {
+    let mut active = Some(&mut state.scope);
+    while let Some(scope) = active {
+        if scope.vars.contains_key(&var) {
+            scope.vars.insert(var, new);
+            return;
+        }
+        active = scope.up.as_deref_mut()
     }
 
-    fn read_var<'b, 'scope>(
-        &self,
-        scope: &'b Scope,
-        var: &str,
-    ) -> (Option<&'b Scope<'b, 'scope>>, Option<String>) {
-        let mut active = Some(scope);
+    state.scope.vars.insert(var, new);
+}
 
-        while let Some(scope) = active {
-            let value = scope.vars.get(var).copied();
-            if let Some(value) = value {
-                return (Some(scope), Some(value.to_string()));
+fn evaluate_expression(expression: &Expression) -> Value {
+    match expression {
+        Expression::Boolean(node) => Value::Bool(node.token.text == "true"),
+        Expression::Nil(_) => Value::Nil,
+        Expression::Number(node) => Value::Number(node.token.text.parse().unwrap()),
+        Expression::String(node) => Value::String(node.token.text.to_string()),
+    }
+}
+
+fn visit_stat_assign(state: &mut ExecutionState, assign: &Assign) {
+    let key = assign.identifier.text;
+    let value = evaluate_expression(&assign.value);
+
+    write_variable(state, key.to_string(), value);
+}
+
+fn visit_service_target(target: &ServiceTarget) -> (String, usize) {
+    let service = target.service.text.to_string();
+    let port = target.port;
+
+    (service, port)
+}
+
+fn evaluate_route(state: &mut ExecutionState, block: &Block) {
+    for statement in &block.body {
+        match statement {
+            Statement::Assign(node) => visit_stat_assign(state, node),
+            stat => {
+                throw(state, "expected assignment", stat.span());
             }
-            active = scope.up
         }
-        let value = self.state.globals.get(var).cloned().map(|v| v.to_string());
-
-        (None, value)
-    }
-
-    fn evaluate_expression(&self, expression: &Expression<'a>) -> Value<'a> {
-        match expression {
-            Expression::Boolean(n) => Value::Bool(n.token.text == "true"),
-            Expression::Number(n) => Value::Number(n.token.text.parse().unwrap()),
-            Expression::String(n) => Value::Str(&n.token.text),
-            Expression::Nil(_) => Value::Nil,
-        }
-    }
-
-    fn emit_http_route(&mut self, route: &HTTPRoute) {
-        println!("{route:?}");
-    }
-
-    fn emit_tcp_route(&mut self, route: &HTTPRoute) {
-        println!("{route:?}");
     }
 }
 
-impl<'a> Visitor<'a> for Renderer<'a> {
-    fn visit_route(&mut self, route: &crate::ast::ast::Route) {
-        let scope = Scope {
+fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
+    evaluate_route(state, &route.properties);
+
+    fn expect_props(
+        state: &mut ExecutionState,
+        names: &[&str],
+        span: Span,
+    ) -> Option<HashMap<String, Value>> {
+        let mut props = HashMap::new();
+        let mut result_ok = true;
+
+        for &name in names {
+            match read_variable(state, name).1 {
+                Some(value) => {
+                    props.insert(name.to_string(), value);
+                }
+                None => {
+                    throw(state, format!("missing required property {name}"), span);
+                    result_ok = false;
+                }
+            }
+        }
+
+        result_ok.then_some(props)
+    }
+    let Some(props) = expect_props(state, &["gateway", "namespace", "entrypoint"], route.span)
+    else {
+        return;
+    };
+
+    let name;
+    if let Some(n) = read_variable(state, "name").1 {
+        let value = n.to_string();
+        if value.is_none() {
+            throw(state, "no name for route definition", route.span);
+            return;
+        }
+        name = value.unwrap()
+    } else {
+        let Some(n) = route.hostname.text.split(".").next() else {
+            return;
+        };
+        name = n.to_string()
+    }
+
+    let (service, port) = visit_service_target(&route.target);
+
+    match route.kind {
+        RouteKind::HTTP => {
+            let route = HTTPRoute {
+                name,
+                gateway: props["gateway"].to_string().unwrap(),
+                namespace: props["namespace"].to_string().unwrap(),
+                entrypoint: props["entrypoint"].to_string().unwrap(),
+                hostname: route.hostname.text.to_string(),
+                service,
+                port,
+            };
+            println!("{route:?}");
+        }
+        RouteKind::TCP => {
+            let route = TCPRoute {
+                name,
+                gateway: props["gateway"].to_string().unwrap(),
+                namespace: props["namespace"].to_string().unwrap(),
+                entrypoint: props["entrypoint"].to_string().unwrap(),
+                service,
+                port,
+            };
+            println!("{route:?}");
+        }
+    }
+}
+
+fn visit_stat_var(state: &mut ExecutionState, var: &LetStatement) {
+    let name = var.root.name.text.to_string();
+    let value = evaluate_expression(&var.value);
+
+    write_variable(state, name, value);
+}
+
+fn visit_block(state: &mut ExecutionState, block: &Block, inherit: bool) {
+    if inherit != true {
+        let parent = mem::replace(
+            &mut state.scope,
+            Scope {
+                up: None,
+                root: false,
+                vars: HashMap::new(),
+            },
+        );
+        state.scope.up = Some(Box::new(parent));
+    }
+
+    for statement in &block.body {
+        match statement {
+            Statement::Assign(node) => visit_stat_assign(state, node),
+            Statement::Route(node) => visit_stat_route(state, node),
+            Statement::Var(node) => visit_stat_var(state, node),
+        }
+    }
+
+    if let Some(parent) = state.scope.up.take() {
+        state.scope = *parent
+    }
+}
+
+pub fn create_state() -> ExecutionState {
+    ExecutionState {
+        globals: HashMap::new(),
+        scope: Scope {
             up: None,
             root: true,
             vars: HashMap::new(),
-        };
-        let mut properties = HashMap::new();
-
-        for statement in &route.properties.body {
-            if let Statement::Assign(node) = statement {
-                let value = self.evaluate_expression(&node.value);
-                if value == Value::Nil {
-                    self.issues.push(Issue {
-                        why: "nil properties not supported",
-                        span: node.span,
-                    });
-                    return;
-                }
-
-                properties.insert(node.identifier.text, value);
-            }
-        }
-
-        match route.kind {
-            RouteKind::HTTP => {
-                let Some(namespace) = properties
-                    .get("namespace")
-                    .copied()
-                    .map(|n| n.to_string().unwrap())
-                else {
-                    return;
-                };
-                let (_, Some(gateway)) = self.read_var(&scope, "gateway") else {
-                    self.issues.push(Issue {
-                        why: "gateway not specified",
-                        span: route.span,
-                    });
-                    return;
-                };
-
-                let route = HTTPRoute {
-                    name: route.hostname.text.split(".").next().unwrap().to_string(),
-                    hostname: route.hostname.text.to_string(),
-                    namespace,
-                    service: route.target.service.text.to_string(),
-                    gateway,
-                };
-                self.emit_http_route(&route);
-            }
-            _ => {}
-        }
+        },
+        issues: Vec::new(),
     }
+}
 
-    fn visit_var(&mut self, var: &crate::ast::ast::LetStatement) {
-        let value = self.evaluate_expression(&var.value).to_string().unwrap();
+pub fn execute(mut state: ExecutionState, ast: &Ast) {
+    visit_block(&mut state, &ast.block, false);
 
-        self.state
-            .globals
-            .insert(var.var.name.text.to_string(), value);
+    if !state.issues.is_empty() {
+        eprintln!("{:?}", state.issues)
     }
-
-    fn visit_assign(&mut self, _: &crate::ast::ast::Assign) {}
-    fn visit_expression(&mut self, _: &Expression) {}
 }

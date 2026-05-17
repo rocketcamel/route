@@ -69,7 +69,7 @@ pub struct VarRoot<'a> {
 
 #[derive(Debug)]
 pub struct LetStatement<'a> {
-    pub var: VarRoot<'a>,
+    pub root: VarRoot<'a>,
     pub value: Expression<'a>,
     pub span: Span,
 }
@@ -101,6 +101,16 @@ pub enum Statement<'a> {
     Assign(Assign<'a>),
     Var(LetStatement<'a>),
     Route(Route<'a>),
+}
+
+impl<'a> Statement<'a> {
+    pub fn span(&self) -> Span {
+        match self {
+            Statement::Assign(n) => n.span,
+            Statement::Var(n) => n.span,
+            Statement::Route(n) => n.span,
+        }
+    }
 }
 
 #[derive(Debug)]

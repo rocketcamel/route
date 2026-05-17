@@ -1,4 +1,5 @@
 let gateway = traefik-gateway
+let entrypoint = websecure
 
 git.lucalise.ca -> cgit:22 {
   name = cgit
@@ -8,4 +9,5 @@ git.lucalise.ca -> cgit:22 {
 tcp git.lucalise.ca -> gitolite:22 {
   name = gitolite
   namespace = git
+  entrypoint = ssh
 }
