@@ -84,6 +84,10 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 TokenKind::Equals
             }
+            b',' => {
+                self.bump();
+                TokenKind::Comma
+            }
             mut c if c.is_ascii_digit() => {
                 loop {
                     c = self.bump_peek();

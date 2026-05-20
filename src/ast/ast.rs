@@ -16,6 +16,7 @@ pub enum TokenKind {
     Identifier,
     Number,
     Equals,
+    Comma,
     // keywords
     True,
     False,
@@ -36,6 +37,22 @@ pub struct Span {
     pub start: usize,
     pub end: usize,
     pub line: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Delimited<'a, VALUE> {
+    pub left: Token<'a>,
+    pub value: VALUE,
+    pub right: Token<'a>,
+}
+
+pub type Separated<'a, T> = Vec<Separate<'a, T>>;
+
+#[derive(Debug, Clone)]
+pub struct Separate<'a, T> {
+    pub value: T,
+    pub separator: Option<Token<'a>>,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -67,6 +84,32 @@ pub struct VarRoot<'a> {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
+pub struct TableFieldNameKey<'a> {
+    pub name: Token<'a>,
+    pub equals: Token<'a>,
+    pub value: Expression<'a>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TableFieldNoKey<'a> {
+    pub value: Expression<'a>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TableField<'a> {
+    NameKey(TableFieldNameKey<'a>),
+    NoKey(TableFieldNoKey<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ExpressionTable<'a> {
+    pub values: Delimited<'a, Separated<'a, TableField<'a>>>,
+    pub span: Span,
+}
+
 #[derive(Debug)]
 pub struct LetStatement<'a> {
     pub root: VarRoot<'a>,
@@ -74,18 +117,19 @@ pub struct LetStatement<'a> {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimpleExpression<'a> {
     pub token: Token<'a>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression<'a> {
     Boolean(SimpleExpression<'a>),
     Nil(SimpleExpression<'a>),
     Number(SimpleExpression<'a>),
     String(SimpleExpression<'a>),
+    Table(ExpressionTable<'a>),
 }
 
 #[derive(Debug)]

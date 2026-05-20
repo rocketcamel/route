@@ -2,8 +2,9 @@ use crate::{
     ast::{
         Lexer, Token, TokenKind,
         ast::{
-            Assign, Ast, Block, Expression, LetStatement, Route, RouteKind, ServiceTarget,
-            SimpleExpression, Span, Statement, VarRoot,
+            Assign, Ast, Block, Delimited, Expression, ExpressionTable, LetStatement, Route,
+            RouteKind, Separate, Separated, ServiceTarget, SimpleExpression, Span, Statement,
+            TableField, TableFieldNameKey, TableFieldNoKey, VarRoot,
         },
     },
     error::{Error, Result},
@@ -24,6 +25,18 @@ fn display<'a>(token: Token<'a>) -> String {
         format!("error {}", token.text)
     } else {
         format!("{kind:?}")
+    }
+}
+
+impl<'a> Expression<'a> {
+    pub fn span(&self) -> Span {
+        match self {
+            Expression::Boolean(node)
+            | Expression::Nil(node)
+            | Expression::Number(node)
+            | Expression::String(node) => node.span,
+            Expression::Table(node) => node.span,
+        }
     }
 }
 
@@ -52,6 +65,13 @@ impl<'a> Parser<'a> {
 
     fn lookahead_is(&self, kind: TokenKind) -> bool {
         return self.lookahead_token.kind == kind;
+    }
+
+    fn is_delimiter(&self) -> bool {
+        return self.current_is(TokenKind::LBrace)
+            || self.current_is(TokenKind::RBrace)
+            || self.current_is(TokenKind::Newline)
+            || self.current_is(TokenKind::Eof);
     }
 
     fn expected_but(&self, kind: &str) -> Error {
@@ -188,8 +208,6 @@ impl<'a> Parser<'a> {
         let start = self.current_token.span;
 
         self.expect(TokenKind::Tcp)?;
-        let fqdn = self.expect(TokenKind::Identifier)?;
-        self.expect(TokenKind::Arrow)?;
 
         let service_target = self.parse_service_node()?;
         let block_start = self.current_token.span;
@@ -206,7 +224,7 @@ impl<'a> Parser<'a> {
 
         Ok(Statement::Route(Route {
             kind: RouteKind::TCP,
-            hostname: fqdn,
+            hostname: service_target.service,
             target: service_target,
             properties: Block {
                 body: properties,
@@ -267,6 +285,133 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    fn parse_tablefield_nokey(&mut self) -> Result<TableFieldNoKey<'a>> {
+        let expression = self.parse_expression()?;
+
+        return Ok(TableFieldNoKey {
+            value: expression.clone(),
+            span: expression.span(),
+        });
+    }
+
+    fn parse_delimiter<V>(
+        &mut self,
+        left: TokenKind,
+        right: TokenKind,
+        call: fn() -> V,
+    ) -> Result<Delimited<'a, V>> {
+        let token_left = self.expect(left)?;
+        let value = call();
+        let token_right = self.expect(right)?;
+
+        Ok(Delimited {
+            left: token_left,
+            right: token_right,
+            value,
+        })
+    }
+
+    fn separated<T>(&mut self, call: fn() -> T) -> Result<Separated<'a, T>> {
+        let mut values = Vec::new();
+
+        while !self.is_delimiter() {
+            let current_pos = self.current_token.span;
+
+            let value = call();
+            let mut separator: Option<Token<'a>> = None;
+            if self.current_is(TokenKind::Comma) {
+                separator = Some(self.expect(TokenKind::Comma)?)
+            }
+
+            let end;
+            if let Some(separator) = separator {
+                end = separator.span.end
+            } else {
+                end = current_pos.end
+            }
+
+            values.push(Separate {
+                value,
+                separator,
+                span: Span {
+                    start: current_pos.start,
+                    end,
+                    line: current_pos.line,
+                },
+            });
+        }
+
+        Ok(values)
+    }
+
+    fn parse_tablefield_namekey(&mut self) -> Result<TableFieldNameKey<'a>> {
+        let name = self.expect(TokenKind::Identifier)?;
+        let equals = self.expect(TokenKind::Equals)?;
+        let value = self.parse_expression()?;
+
+        Ok(TableFieldNameKey {
+            name,
+            equals,
+            value: value.clone(),
+            span: Span {
+                start: name.span.start,
+                end: value.span().end,
+                line: name.span.line,
+            },
+        })
+    }
+
+    fn parse_tablefield(&mut self) -> Result<TableField<'a>> {
+        if self.current_is(TokenKind::Identifier) && self.lookahead_is(TokenKind::Equals) {
+            Ok(TableField::NameKey(self.parse_tablefield_namekey()?))
+        } else {
+            Ok(TableField::NoKey(self.parse_tablefield_nokey()?))
+        }
+    }
+
+    fn parse_table(&mut self) -> Result<ExpressionTable<'a>> {
+        let left = self.expect(TokenKind::LBrace)?;
+
+        let mut fields = Vec::new();
+        while !self.is_delimiter() {
+            let current_pos = self.current_token.span;
+            let field = self.parse_tablefield()?;
+
+            let separator = if self.current_is(TokenKind::Comma) {
+                Some(self.expect(TokenKind::Comma)?)
+            } else {
+                None
+            };
+
+            let end = separator.map(|s| s.span.end).unwrap_or(current_pos.end);
+
+            fields.push(Separate {
+                value: field,
+                separator,
+                span: Span {
+                    start: current_pos.start,
+                    end,
+                    line: current_pos.line,
+                },
+            });
+        }
+
+        let right = self.expect(TokenKind::RBrace)?;
+
+        Ok(ExpressionTable {
+            values: Delimited {
+                left,
+                value: fields,
+                right,
+            },
+            span: Span {
+                start: left.span.start,
+                end: right.span.end,
+                line: left.span.line,
+            },
+        })
+    }
+
     fn parse_expression(&mut self) -> Result<Expression<'a>> {
         match self.current_token.kind {
             TokenKind::Nil => {
@@ -289,6 +434,10 @@ impl<'a> Parser<'a> {
                     token,
                     span: token.span,
                 }))
+            }
+            TokenKind::LBrace => {
+                let expression = self.parse_table()?;
+                Ok(Expression::Table(expression))
             }
             kind => {
                 if kind == TokenKind::True || kind == TokenKind::False {

@@ -103,8 +103,8 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
             },
             spec: HTTPRouteSpec {
                 parent_refs: vec![ParentRef {
-                    name: &route.name,
-                    namespace: &route.namespace,
+                    name: &route.gateway.name,
+                    namespace: &route.gateway.namespace,
                 }],
                 hostnames: vec![&route.hostname],
                 rules: vec![HTTPRouteRule {

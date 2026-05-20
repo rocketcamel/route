@@ -2,6 +2,7 @@ use std::{collections::HashMap, mem};
 
 use crate::ast::ast::{
     Assign, Ast, Block, Expression, LetStatement, Route, RouteKind, ServiceTarget, Span, Statement,
+    TableField,
 };
 
 #[derive(Debug)]
@@ -42,6 +43,7 @@ enum Value {
     Number(i64),
     Bool(bool),
     Nil,
+    Table(HashMap<String, Value>),
 }
 
 impl Value {
@@ -51,6 +53,7 @@ impl Value {
             Value::Number(n) => Some(n.to_string()),
             Value::Bool(n) => Some(n.to_string()),
             Value::Nil => None,
+            Value::Table(_) => None,
         }
     }
 }
@@ -72,7 +75,7 @@ pub struct HTTPRoute {
     pub service: String,
     pub port: usize,
     pub namespace: String,
-    pub gateway: String,
+    pub gateway: Gateway,
     pub entrypoint: String,
 }
 
@@ -82,8 +85,14 @@ pub struct TCPRoute {
     pub service: String,
     pub port: usize,
     pub namespace: String,
-    pub gateway: String,
+    pub gateway: Gateway,
     pub entrypoint: String,
+}
+
+#[derive(Debug)]
+pub struct Gateway {
+    pub name: String,
+    pub namespace: String,
 }
 
 fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
@@ -126,6 +135,24 @@ fn evaluate_expression(expression: &Expression) -> Value {
         Expression::Nil(_) => Value::Nil,
         Expression::Number(node) => Value::Number(node.token.text.parse().unwrap()),
         Expression::String(node) => Value::String(node.token.text.to_string()),
+        Expression::Table(node) => {
+            let mut table = HashMap::new();
+
+            for field in &node.values.value {
+                let token = &field.value;
+
+                match token {
+                    TableField::NoKey(_) => {
+                        todo!()
+                    }
+                    TableField::NameKey(key) => {
+                        table.insert(key.name.text.to_string(), evaluate_expression(&key.value))
+                    }
+                };
+            }
+
+            Value::Table(table)
+        }
     }
 }
 
@@ -201,11 +228,26 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
 
     let (service, port) = visit_service_target(&route.target);
 
+    let (gateway, namespace) = match &props["gateway"] {
+        Value::Table(node) => {
+            let gw = node.get("name").and_then(|v| v.to_string()).unwrap();
+            let ns = node.get("namespace").and_then(|v| v.to_string()).unwrap();
+            (gw, ns)
+        }
+        other => {
+            throw(state, "gateway must be a table", route.span);
+            return;
+        }
+    };
+
     match route.kind {
         RouteKind::HTTP => {
             let route = HTTPRoute {
                 name,
-                gateway: props["gateway"].to_string().unwrap(),
+                gateway: Gateway {
+                    name: gateway,
+                    namespace,
+                },
                 namespace: props["namespace"].to_string().unwrap(),
                 entrypoint: props["entrypoint"].to_string().unwrap(),
                 hostname: route.hostname.text.to_string(),
@@ -217,7 +259,10 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
         RouteKind::TCP => {
             let route = TCPRoute {
                 name,
-                gateway: props["gateway"].to_string().unwrap(),
+                gateway: Gateway {
+                    name: gateway,
+                    namespace,
+                },
                 namespace: props["namespace"].to_string().unwrap(),
                 entrypoint: props["entrypoint"].to_string().unwrap(),
                 service,
