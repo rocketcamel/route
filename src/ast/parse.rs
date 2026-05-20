@@ -1,19 +1,160 @@
 use crate::{
-    ast::{
-        Lexer, Token, TokenKind,
-        ast::{
-            Assign, Ast, Block, Delimited, Expression, ExpressionTable, LetStatement, Route,
-            RouteKind, Separate, Separated, ServiceTarget, SimpleExpression, Span, Statement,
-            TableField, TableFieldNameKey, TableFieldNoKey, VarRoot,
-        },
-    },
+    ast::ast::{Assign, Ast, Block, Expression, Span, Statement, Token, TokenKind},
     error::{Error, Result},
 };
 
-pub struct Parser<'a> {
-    pub lexer: Lexer<'a>,
-    pub current_token: Token<'a>,
-    pub lookahead_token: Token<'a>,
+struct Lexer<'a> {
+    input: &'a [u8],
+    pos: usize,
+    len: usize,
+    line: usize,
+}
+
+struct Parser<'a> {
+    lexer: Lexer<'a>,
+    current_token: Token<'a>,
+    current_kind: TokenKind,
+    lookahead_token: Token<'a>,
+    lookahead_kind: TokenKind,
+}
+
+fn is_alpha(char: u8) -> bool {
+    return char.is_ascii_alphabetic() || char == b'.' || char == b'-' || char == b'_';
+}
+
+fn is_whitespace(char: u8) -> bool {
+    return char.is_ascii_whitespace();
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a [u8]) -> Self {
+        Self {
+            input,
+            pos: 0,
+            len: input.len(),
+            line: 1,
+        }
+    }
+
+    fn peek(&mut self) -> u8 {
+        if self.pos == self.len {
+            return 0;
+        }
+        self.input[self.pos]
+    }
+
+    fn bump(&mut self) {
+        self.pos = self.len.min(self.pos + 1)
+    }
+
+    fn bump_peek(&mut self) -> u8 {
+        self.bump();
+        return self.peek();
+    }
+
+    fn read_kind(&mut self) -> TokenKind {
+        let mut c = self.peek();
+        if c == 0 {
+            return TokenKind::Eof;
+        }
+
+        match c {
+            b'-' => {
+                self.bump();
+                c = self.peek();
+                if c == b'>' {
+                    TokenKind::Arrow
+                } else {
+                    TokenKind::Error
+                }
+            }
+            b'{' => {
+                self.bump();
+                TokenKind::LBrace
+            }
+            b'}' => {
+                self.bump();
+                TokenKind::RBrace
+            }
+            b':' => {
+                self.bump();
+                TokenKind::Colon
+            }
+            b'=' => {
+                self.bump();
+                TokenKind::Equals
+            }
+            mut c if c.is_ascii_alphanumeric() => {
+                loop {
+                    c = self.bump_peek();
+
+                    if !(c.is_ascii_alphanumeric() || c == b'.' || c == b'_') {
+                        break;
+                    }
+                }
+                TokenKind::Number
+            }
+            mut c if is_alpha(c) => {
+                let start = self.pos;
+                loop {
+                    c = self.bump_peek();
+
+                    if !is_alpha(c) {
+                        break;
+                    }
+                }
+                let value = str::from_utf8(&self.input[start..self.pos]).unwrap();
+                match value {
+                    "true" => TokenKind::True,
+                    "false" => TokenKind::False,
+                    "nil" => TokenKind::Nil,
+                    "tcp" => TokenKind::Tcp,
+                    "let" => TokenKind::Let,
+                    _ => TokenKind::Identifier,
+                }
+            }
+            c if is_whitespace(c) => {
+                self.bump();
+                if c == b'\n' {
+                    self.line += 1
+                }
+                TokenKind::Whitespace
+            }
+            _ => TokenKind::Error,
+        }
+    }
+
+    fn next_token(&mut self) -> Result<Token<'a>> {
+        let mut start = self.pos;
+        let mut initial_line = self.line;
+        let mut kind = self.read_kind();
+
+        if kind == TokenKind::Whitespace {
+            start = self.pos;
+            initial_line = self.line;
+            kind = self.read_kind();
+        }
+
+        if kind == TokenKind::Error {
+            let value = str::from_utf8(&self.input[start..=self.pos]).unwrap();
+            return Err(Error::parse(
+                format!("{value} into a token"),
+                initial_line,
+                self.pos - start,
+            ));
+        }
+        let text = str::from_utf8(&self.input[start..self.pos]).unwrap();
+
+        Ok(Token {
+            kind,
+            text,
+            span: Span {
+                start,
+                end: self.pos,
+                line: initial_line,
+            },
+        })
+    }
 }
 
 fn display<'a>(token: Token<'a>) -> String {
@@ -34,422 +175,104 @@ impl<'a> Expression<'a> {
             Expression::Boolean(node)
             | Expression::Nil(node)
             | Expression::Number(node)
-            | Expression::String(node) => node.span,
-            Expression::Table(node) => node.span,
+            | Expression::String(node => node.span,
         }
     }
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(source: &'a [u8]) -> Result<Self> {
-        let mut lexer = Lexer::new(source);
+    pub fn new(input: &'a [u8]) -> Result<Self> {
+        let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token()?;
+        let current_kind = current_token.kind;
         let lookahead_token = lexer.next_token()?;
+        let lookahead_kind = lookahead_token.kind;
+
         Ok(Self {
-            lexer,
             current_token,
+            current_kind,
             lookahead_token,
+            lookahead_kind,
+            lexer,
         })
+    }
+
+    pub fn parse(&mut self) -> Result<Ast<'a>> {
+        Ok(Ast {
+            block: self.parse_block_node()?,
+        })
+    }
+
+    fn current_is(&self, kind: TokenKind) -> bool {
+        return self.current_kind == kind;
+    }
+
+    fn lookahead_is(&self, kind: TokenKind) -> bool {
+        return self.lookahead_kind == kind;
     }
 
     fn consume(&mut self) -> Result<Token<'a>> {
         let old_token = self.current_token;
         self.current_token = self.lookahead_token;
+        self.current_kind = self.lookahead_kind;
         self.lookahead_token = self.lexer.next_token()?;
+        self.lookahead_kind = self.lookahead_token.kind;
         Ok(old_token)
     }
 
-    fn current_is(&self, kind: TokenKind) -> bool {
-        return self.current_token.kind == kind;
-    }
-
-    fn lookahead_is(&self, kind: TokenKind) -> bool {
-        return self.lookahead_token.kind == kind;
-    }
-
-    fn is_delimiter(&self) -> bool {
-        return self.current_is(TokenKind::LBrace)
-            || self.current_is(TokenKind::RBrace)
-            || self.current_is(TokenKind::Newline)
-            || self.current_is(TokenKind::Eof);
-    }
-
     fn expected_but(&self, kind: &str) -> Error {
-        return Error::parse(
-            format!(
-                "expected {}, but got {:?}",
-                kind,
-                display(self.current_token)
-            ),
-            self.current_token.span.line,
+        Error::parse(
+            format!("expected {}, but got {}", kind, display(self.current_token)),
             self.current_token.span.start,
-        );
+            self.current_token.span.line,
+        )
     }
 
     fn expect(&mut self, kind: TokenKind) -> Result<Token<'a>> {
-        if self.current_is(kind) {
-            return self.consume();
-        } else {
+        if !self.current_is(kind) {
             return Err(self.expected_but(&format!("{kind:?}")));
         }
+        return self.consume();
     }
 
-    fn skip_current(&mut self) -> Result<()> {
-        while self.current_is(TokenKind::Whitespace) {
-            self.consume()?;
-        }
-        Ok(())
-    }
+    fn parse_expression(&mut self) -> Result<Expression<'a>> {}
 
-    pub fn parse(&mut self) -> Result<Ast<'a>> {
-        let block = self.parse_block_node()?;
-        Ok(Ast { block })
+    fn parse_assign_node(&mut self) -> Result<Statement<'a>> {
+        let start = self.current_token.span;
+
+        let identifier = self.expect(TokenKind::Identifier)?;
+        let equals = self.expect(TokenKind::Equals)?;
+        let value = self.parse_expression()?;
+
+        Ok(Statement::Assign(Assign {
+            identifier,
+            equals,
+            value: value.clone(),
+            span: Span {
+                start: start.start,
+                end: value.span().end,
+                line: start.line,
+            },
+        }))
     }
 
     fn parse_block_node(&mut self) -> Result<Block<'a>> {
         let start = self.current_token.span;
-
         let mut body = vec![];
-        while self.current_token.kind != TokenKind::Eof {
-            self.skip_current()?;
 
-            if self.current_is(TokenKind::Tcp) {
-                println!("parsing tcp node");
-                body.push(self.parse_tcp_node()?)
-            } else if self.current_is(TokenKind::Let) {
-                body.push(self.parse_var_node()?);
-            } else if self.lookahead_is(TokenKind::Equals) {
+        while self.current_kind != TokenKind::Eof {
+            if self.lookahead_is(TokenKind::Equals) {
                 body.push(self.parse_assign_node()?);
-            } else if self.current_is(TokenKind::Identifier) {
-                body.push(self.parse_route_node()?);
-            } else {
-                return Err(self.expected_but("statement"));
             }
         }
-
-        let end = self.current_token.span;
 
         Ok(Block {
             body,
             span: Span {
                 start: start.start,
-                end: end.end,
+                end: self.current_token.span.end,
                 line: start.line,
             },
         })
-    }
-
-    fn parse_route_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-        let fqdn = self.expect(TokenKind::Identifier)?;
-        self.expect(TokenKind::Arrow)?;
-        let service_target = self.parse_service_node()?;
-
-        let block_start = self.current_token.span;
-        self.expect(TokenKind::LBrace)?;
-
-        let mut properties = vec![];
-        while self.current_token.kind != TokenKind::RBrace
-            && self.current_token.kind != TokenKind::Eof
-        {
-            properties.push(self.parse_assign_node()?);
-        }
-        let end = self.current_token.span;
-        self.expect(TokenKind::RBrace)?;
-
-        Ok(Statement::Route(Route {
-            kind: RouteKind::HTTP,
-            hostname: fqdn,
-            target: service_target,
-            properties: Block {
-                body: properties,
-                span: Span {
-                    start: block_start.start,
-                    end: end.end,
-                    line: block_start.line,
-                },
-            },
-            span: Span {
-                start: start.start,
-                end: end.end,
-                line: start.line,
-            },
-        }))
-    }
-
-    fn parse_var_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-        let var = self.expect(TokenKind::Let)?;
-        let name = self.expect(TokenKind::Identifier)?;
-        self.expect(TokenKind::Equals)?;
-        let value = self.parse_expression()?;
-        let end = self.current_token.span;
-
-        Ok(Statement::Var(LetStatement {
-            root: VarRoot {
-                var,
-                name,
-                span: Span {
-                    start: start.start,
-                    end: name.span.end,
-                    line: start.line,
-                },
-            },
-            value,
-            span: Span {
-                start: start.start,
-                end: end.end,
-                line: start.line,
-            },
-        }))
-    }
-
-    fn parse_tcp_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-
-        self.expect(TokenKind::Tcp)?;
-
-        let service_target = self.parse_service_node()?;
-        let block_start = self.current_token.span;
-        self.expect(TokenKind::LBrace)?;
-
-        let mut properties = vec![];
-        while self.current_token.kind != TokenKind::RBrace
-            && self.current_token.kind != TokenKind::Eof
-        {
-            properties.push(self.parse_assign_node()?)
-        }
-        let end = self.current_token.span;
-        self.expect(TokenKind::RBrace)?;
-
-        Ok(Statement::Route(Route {
-            kind: RouteKind::TCP,
-            hostname: service_target.service,
-            target: service_target,
-            properties: Block {
-                body: properties,
-                span: Span {
-                    start: block_start.start,
-                    end: end.end,
-                    line: block_start.line,
-                },
-            },
-            span: Span {
-                start: start.start,
-                end: end.end,
-                line: start.line,
-            },
-        }))
-    }
-
-    fn parse_service_node(&mut self) -> Result<ServiceTarget<'a>> {
-        let start = self.current_token.span;
-        let service = self.expect(TokenKind::Identifier)?;
-        self.expect(TokenKind::Colon)?;
-        let port_token = self.expect(TokenKind::Number)?;
-        let port = port_token.text.parse::<usize>().map_err(|e| {
-            Error::parse(
-                format!("invalid number: {e:?}"),
-                port_token.span.line,
-                port_token.span.start,
-            )
-        })?;
-
-        Ok(ServiceTarget {
-            service,
-            port,
-            span: Span {
-                start: start.start,
-                end: port_token.span.end,
-                line: start.line,
-            },
-        })
-    }
-
-    fn parse_assign_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-        let identifier = self.expect(TokenKind::Identifier)?;
-        let equals = self.expect(TokenKind::Equals)?;
-        let expression = self.parse_expression()?;
-        let end = self.current_token.span;
-
-        Ok(Statement::Assign(Assign {
-            identifier,
-            equals,
-            value: expression,
-            span: Span {
-                start: start.start,
-                end: end.end,
-                line: start.line,
-            },
-        }))
-    }
-
-    fn parse_tablefield_nokey(&mut self) -> Result<TableFieldNoKey<'a>> {
-        let expression = self.parse_expression()?;
-
-        return Ok(TableFieldNoKey {
-            value: expression.clone(),
-            span: expression.span(),
-        });
-    }
-
-    fn parse_delimiter<V>(
-        &mut self,
-        left: TokenKind,
-        right: TokenKind,
-        call: fn() -> V,
-    ) -> Result<Delimited<'a, V>> {
-        let token_left = self.expect(left)?;
-        let value = call();
-        let token_right = self.expect(right)?;
-
-        Ok(Delimited {
-            left: token_left,
-            right: token_right,
-            value,
-        })
-    }
-
-    fn separated<T>(&mut self, call: fn() -> T) -> Result<Separated<'a, T>> {
-        let mut values = Vec::new();
-
-        while !self.is_delimiter() {
-            let current_pos = self.current_token.span;
-
-            let value = call();
-            let mut separator: Option<Token<'a>> = None;
-            if self.current_is(TokenKind::Comma) {
-                separator = Some(self.expect(TokenKind::Comma)?)
-            }
-
-            let end;
-            if let Some(separator) = separator {
-                end = separator.span.end
-            } else {
-                end = current_pos.end
-            }
-
-            values.push(Separate {
-                value,
-                separator,
-                span: Span {
-                    start: current_pos.start,
-                    end,
-                    line: current_pos.line,
-                },
-            });
-        }
-
-        Ok(values)
-    }
-
-    fn parse_tablefield_namekey(&mut self) -> Result<TableFieldNameKey<'a>> {
-        let name = self.expect(TokenKind::Identifier)?;
-        let equals = self.expect(TokenKind::Equals)?;
-        let value = self.parse_expression()?;
-
-        Ok(TableFieldNameKey {
-            name,
-            equals,
-            value: value.clone(),
-            span: Span {
-                start: name.span.start,
-                end: value.span().end,
-                line: name.span.line,
-            },
-        })
-    }
-
-    fn parse_tablefield(&mut self) -> Result<TableField<'a>> {
-        if self.current_is(TokenKind::Identifier) && self.lookahead_is(TokenKind::Equals) {
-            Ok(TableField::NameKey(self.parse_tablefield_namekey()?))
-        } else {
-            Ok(TableField::NoKey(self.parse_tablefield_nokey()?))
-        }
-    }
-
-    fn parse_table(&mut self) -> Result<ExpressionTable<'a>> {
-        let left = self.expect(TokenKind::LBrace)?;
-
-        let mut fields = Vec::new();
-        while !self.is_delimiter() {
-            let current_pos = self.current_token.span;
-            let field = self.parse_tablefield()?;
-
-            let separator = if self.current_is(TokenKind::Comma) {
-                Some(self.expect(TokenKind::Comma)?)
-            } else {
-                None
-            };
-
-            let end = separator.map(|s| s.span.end).unwrap_or(current_pos.end);
-
-            fields.push(Separate {
-                value: field,
-                separator,
-                span: Span {
-                    start: current_pos.start,
-                    end,
-                    line: current_pos.line,
-                },
-            });
-        }
-
-        let right = self.expect(TokenKind::RBrace)?;
-
-        Ok(ExpressionTable {
-            values: Delimited {
-                left,
-                value: fields,
-                right,
-            },
-            span: Span {
-                start: left.span.start,
-                end: right.span.end,
-                line: left.span.line,
-            },
-        })
-    }
-
-    fn parse_expression(&mut self) -> Result<Expression<'a>> {
-        match self.current_token.kind {
-            TokenKind::Nil => {
-                let token = self.expect(TokenKind::Nil)?;
-                Ok(Expression::Nil(SimpleExpression {
-                    token,
-                    span: token.span,
-                }))
-            }
-            TokenKind::Number => {
-                let token = self.expect(TokenKind::Number)?;
-                Ok(Expression::Number(SimpleExpression {
-                    token,
-                    span: token.span,
-                }))
-            }
-            TokenKind::Identifier => {
-                let token = self.expect(TokenKind::Identifier)?;
-                Ok(Expression::String(SimpleExpression {
-                    token,
-                    span: token.span,
-                }))
-            }
-            TokenKind::LBrace => {
-                let expression = self.parse_table()?;
-                Ok(Expression::Table(expression))
-            }
-            kind => {
-                if kind == TokenKind::True || kind == TokenKind::False {
-                    let token = self.consume()?;
-                    Ok(Expression::Boolean(SimpleExpression {
-                        token,
-                        span: token.span,
-                    }))
-                } else {
-                    return Err(self.expected_but(&display(self.current_token)));
-                }
-            }
-        }
     }
 }
