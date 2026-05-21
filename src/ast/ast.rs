@@ -23,6 +23,7 @@ pub enum TokenKind {
     Nil,
     Tcp,
     Let,
+    Route,
     // whitespace
     Whitespace,
     Comment,
@@ -55,29 +56,35 @@ pub struct Separate<'a, T> {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ServiceTarget<'a> {
     pub service: Token<'a>,
     pub port: usize,
     pub span: Span,
 }
 
-#[derive(Debug)]
-pub enum RouteKind {
-    HTTP,
-    TCP,
+#[derive(Debug, Clone)]
+pub struct RouteTCP<'a> {
+    pub target: ServiceTarget<'a>,
+    pub properties: Block<'a>,
+    pub span: Span,
 }
 
-#[derive(Debug)]
-pub struct Route<'a> {
-    pub kind: RouteKind,
+#[derive(Debug, Clone)]
+pub struct RouteHTTP<'a> {
     pub hostname: Token<'a>,
     pub target: ServiceTarget<'a>,
     pub properties: Block<'a>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum Route<'a> {
+    HTTP(RouteHTTP<'a>),
+    TCP(RouteTCP<'a>),
+}
+
+#[derive(Debug, Clone)]
 pub struct VarRoot<'a> {
     pub var: Token<'a>,
     pub name: Token<'a>,
@@ -110,7 +117,7 @@ pub struct ExpressionTable<'a> {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LetStatement<'a> {
     pub root: VarRoot<'a>,
     pub value: Expression<'a>,
@@ -132,7 +139,7 @@ pub enum Expression<'a> {
     Table(ExpressionTable<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Assign<'a> {
     pub identifier: Token<'a>,
     pub equals: Token<'a>,
@@ -140,14 +147,14 @@ pub struct Assign<'a> {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement<'a> {
     Assign(Assign<'a>),
     Var(LetStatement<'a>),
     Route(Route<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block<'a> {
     pub body: Vec<Statement<'a>>,
     pub span: Span,

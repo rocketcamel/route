@@ -5,12 +5,12 @@ let gateway = {
 
 let entrypoint = websecure
 
-git.lucalise.ca -> cgit:22 {
+route git.lucalise.ca -> cgit:22 {
   name = cgit
   namespace = git
 }
 
-tcp gitolite:22 {
+route tcp gitolite:22 {
   name = gitolite
   namespace = git
   entrypoint = ssh

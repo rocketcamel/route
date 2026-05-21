@@ -1,8 +1,8 @@
 use std::{collections::HashMap, mem};
 
 use crate::ast::ast::{
-    Assign, Ast, Block, Expression, LetStatement, Route, RouteKind, ServiceTarget, Span, Statement,
-    TableField,
+    Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span,
+    Statement, TableField,
 };
 
 #[derive(Debug)]
@@ -58,12 +58,21 @@ impl Value {
     }
 }
 
+impl<'a> Route<'a> {
+    pub fn span(&self) -> Span {
+        match self {
+            Route::HTTP(r) => r.span,
+            Route::TCP(r) => r.span,
+        }
+    }
+}
+
 impl<'a> Statement<'a> {
     pub fn span(&self) -> Span {
         match self {
             Statement::Assign(n) => n.span,
             Statement::Var(n) => n.span,
-            Statement::Route(n) => n.span,
+            Statement::Route(n) => n.span(),
         }
     }
 }
@@ -76,7 +85,6 @@ pub struct HTTPRoute {
     pub port: usize,
     pub namespace: String,
     pub gateway: Gateway,
-    pub entrypoint: String,
 }
 
 #[derive(Debug)]
@@ -181,31 +189,32 @@ fn evaluate_route(state: &mut ExecutionState, block: &Block) {
     }
 }
 
-fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
-    evaluate_route(state, &route.properties);
+fn expect_props(
+    state: &mut ExecutionState,
+    names: &[&str],
+    span: Span,
+) -> Option<HashMap<String, Value>> {
+    let mut props = HashMap::new();
+    let mut result_ok = true;
 
-    fn expect_props(
-        state: &mut ExecutionState,
-        names: &[&str],
-        span: Span,
-    ) -> Option<HashMap<String, Value>> {
-        let mut props = HashMap::new();
-        let mut result_ok = true;
-
-        for &name in names {
-            match read_variable(state, name).1 {
-                Some(value) => {
-                    props.insert(name.to_string(), value);
-                }
-                None => {
-                    throw(state, format!("missing required property {name}"), span);
-                    result_ok = false;
-                }
+    for &name in names {
+        match read_variable(state, name).1 {
+            Some(value) => {
+                props.insert(name.to_string(), value);
+            }
+            None => {
+                throw(state, format!("missing required property {name}"), span);
+                result_ok = false;
             }
         }
-
-        result_ok.then_some(props)
     }
+
+    result_ok.then_some(props)
+}
+
+fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
+    evaluate_route(state, &route.properties);
+
     let Some(props) = expect_props(state, &["gateway", "namespace", "entrypoint"], route.span)
     else {
         return;
@@ -215,7 +224,54 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
     if let Some(n) = read_variable(state, "name").1 {
         let value = n.to_string();
         if value.is_none() {
-            throw(state, "no name for route definition", route.span);
+            throw(state, "route has no name definition", route.span);
+            return;
+        }
+        name = value.unwrap()
+    } else {
+        name = route.target.service.text.to_string()
+    }
+
+    let (gateway, namespace) = match &props["gateway"] {
+        Value::Table(table) => {
+            let gw = table.get("name").and_then(|v| v.to_string()).unwrap();
+            let ns = table.get("namespace").and_then(|v| v.to_string()).unwrap();
+
+            (gw, ns)
+        }
+        _ => {
+            throw(state, "gateway must be a table", route.span);
+            return;
+        }
+    };
+
+    let (service, port) = visit_service_target(&route.target);
+
+    state.routes.push(RouteResult::TCP(TCPRoute {
+        name,
+        service,
+        port,
+        gateway: Gateway {
+            name: gateway,
+            namespace: namespace,
+        },
+        namespace: props["namespace"].to_string().unwrap(),
+        entrypoint: props["entrypoint"].to_string().unwrap(),
+    }));
+}
+
+fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
+    evaluate_route(state, &route.properties);
+
+    let Some(props) = expect_props(state, &["gateway", "namespace"], route.span) else {
+        return;
+    };
+
+    let name;
+    if let Some(n) = read_variable(state, "name").1 {
+        let value = n.to_string();
+        if value.is_none() {
+            throw(state, "route has no name definition", route.span);
             return;
         }
         name = value.unwrap()
@@ -226,50 +282,38 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
         name = n.to_string()
     }
 
-    let (service, port) = visit_service_target(&route.target);
-
     let (gateway, namespace) = match &props["gateway"] {
-        Value::Table(node) => {
-            let gw = node.get("name").and_then(|v| v.to_string()).unwrap();
-            let ns = node.get("namespace").and_then(|v| v.to_string()).unwrap();
+        Value::Table(table) => {
+            let gw = table.get("name").and_then(|v| v.to_string()).unwrap();
+            let ns = table.get("namespace").and_then(|v| v.to_string()).unwrap();
+
             (gw, ns)
         }
-        other => {
+        _ => {
             throw(state, "gateway must be a table", route.span);
             return;
         }
     };
 
-    match route.kind {
-        RouteKind::HTTP => {
-            let route = HTTPRoute {
-                name,
-                gateway: Gateway {
-                    name: gateway,
-                    namespace,
-                },
-                namespace: props["namespace"].to_string().unwrap(),
-                entrypoint: props["entrypoint"].to_string().unwrap(),
-                hostname: route.hostname.text.to_string(),
-                service,
-                port,
-            };
-            state.routes.push(RouteResult::HTTP(route));
-        }
-        RouteKind::TCP => {
-            let route = TCPRoute {
-                name,
-                gateway: Gateway {
-                    name: gateway,
-                    namespace,
-                },
-                namespace: props["namespace"].to_string().unwrap(),
-                entrypoint: props["entrypoint"].to_string().unwrap(),
-                service,
-                port,
-            };
-            state.routes.push(RouteResult::TCP(route));
-        }
+    let (service, port) = visit_service_target(&route.target);
+
+    state.routes.push(RouteResult::HTTP(HTTPRoute {
+        name,
+        hostname: route.hostname.text.to_string(),
+        service,
+        port,
+        gateway: Gateway {
+            name: gateway,
+            namespace: namespace,
+        },
+        namespace: props["namespace"].to_string().unwrap(),
+    }));
+}
+
+fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
+    match route {
+        Route::TCP(node) => visit_route_tcp(state, node),
+        Route::HTTP(node) => visit_route_http(state, node),
     }
 }
 
