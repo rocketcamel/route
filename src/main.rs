@@ -1,4 +1,5 @@
 mod ast;
+mod config;
 mod error;
 mod output;
 mod treewalker;
@@ -11,6 +12,7 @@ use thiserror_ext::AsReport;
 
 use crate::{
     ast::Parser as RtParser,
+    config::RouteConfig,
     output::render_output,
     treewalker::{create_state, execute},
 };
@@ -31,7 +33,9 @@ fn run() -> crate::error::Result<()> {
 
     match &cli.command {
         Commands::GenerateRoutes => {
-            let bytes = std::fs::read(PathBuf::from("./test.rt"))?;
+            let project = RouteConfig::read()?;
+
+            let bytes = std::fs::read(&project.input.module_path)?;
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
 

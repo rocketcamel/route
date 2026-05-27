@@ -31,7 +31,15 @@ pub struct TCPRouteSpec<'a> {
 #[serde(rename_all = "camelCase")]
 pub struct TCPRouteRule<'a> {
     pub r#match: &'a str,
+    pub middlewares: Vec<TCPRouteMiddleware<'a>>,
     pub services: Vec<BackendRef<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TCPRouteMiddleware<'a> {
+    pub name: &'a str,
+    pub namespace: &'a str,
 }
 
 #[derive(Serialize)]
@@ -94,6 +102,19 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
             output.push_str("---\n");
         }
 
+        let mut filters = vec![];
+
+        if route.private {
+            filters.push(Filter {
+                r#type: "ExtensionRef",
+                extension_ref: ExtensionRef {
+                    group: "traefik.io",
+                    kind: "Middleware",
+                    name: "private-networks",
+                },
+            });
+        }
+
         let result = K8sHTTPRoute {
             api_version: "gateway.networking.k8s.io/v1",
             kind: "HTTPRoute",
@@ -112,7 +133,7 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
                         name: &route.service,
                         port: route.port,
                     }],
-                    filters: vec![],
+                    filters,
                 }],
             },
         };
@@ -134,7 +155,8 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
             spec: TCPRouteSpec {
                 entry_points: vec![&route.entrypoint],
                 routes: vec![TCPRouteRule {
-                    r#match: "HostSNI(`*)",
+                    r#match: "HostSNI(`*`)",
+                    middlewares: vec![],
                     services: vec![BackendRef {
                         name: &route.name,
                         port: route.port,

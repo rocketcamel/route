@@ -1,6 +1,8 @@
 use thiserror::Error;
 use thiserror_ext::{Box, Construct};
 
+use crate::config::errors::ConfigError;
+
 #[derive(Error, Debug, Construct, Box)]
 #[thiserror_ext(newtype(name = Error))]
 pub enum ErrorKind {
@@ -12,6 +14,8 @@ pub enum ErrorKind {
         line: usize,
         col: usize,
     },
+    #[error("config")]
+    Config(#[from] ConfigError),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

@@ -1,0 +1,5 @@
+[input]
+module_path = "./main.rt"
+
+[output]
+path = "./out/routes.yaml"

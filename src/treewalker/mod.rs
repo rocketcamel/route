@@ -1,8 +1,13 @@
-use std::{collections::HashMap, mem};
+mod value;
 
-use crate::ast::ast::{
-    Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span,
-    Statement, TableField,
+use std::{collections::HashMap, mem, rc::Rc};
+
+use crate::{
+    ast::ast::{
+        Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget,
+        Span, Statement, TableField,
+    },
+    treewalker::value::Value,
 };
 
 #[derive(Debug)]
@@ -37,27 +42,6 @@ pub struct ExecutionResult {
     pub tcp: Vec<TCPRoute>,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-enum Value {
-    String(String),
-    Number(i64),
-    Bool(bool),
-    Nil,
-    Table(HashMap<String, Value>),
-}
-
-impl Value {
-    fn to_string(&self) -> Option<String> {
-        match self {
-            Value::String(n) => Some(n.to_string()),
-            Value::Number(n) => Some(n.to_string()),
-            Value::Bool(n) => Some(n.to_string()),
-            Value::Nil => None,
-            Value::Table(_) => None,
-        }
-    }
-}
-
 impl<'a> Route<'a> {
     pub fn span(&self) -> Span {
         match self {
@@ -85,6 +69,8 @@ pub struct HTTPRoute {
     pub port: usize,
     pub namespace: String,
     pub gateway: Gateway,
+    pub private: bool,
+    pub private_middleware_name: Rc<str>,
 }
 
 #[derive(Debug)]
@@ -95,6 +81,8 @@ pub struct TCPRoute {
     pub namespace: String,
     pub gateway: Gateway,
     pub entrypoint: String,
+    pub private: bool,
+    pub private_middleware_name: Rc<str>,
 }
 
 #[derive(Debug)]
@@ -202,7 +190,7 @@ fn expect_props(
             Some(value) => {
                 props.insert(name.to_string(), value);
             }
-            None => {
+            _ => {
                 throw(state, format!("missing required property {name}"), span);
                 result_ok = false;
             }
@@ -210,6 +198,14 @@ fn expect_props(
     }
 
     result_ok.then_some(props)
+}
+
+fn route_private(state: &mut ExecutionState) -> bool {
+    let Some(property) = read_variable(state, "private").1 else {
+        return true;
+    };
+
+    property.truthy()
 }
 
 fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
@@ -257,6 +253,7 @@ fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
         },
         namespace: props["namespace"].to_string().unwrap(),
         entrypoint: props["entrypoint"].to_string().unwrap(),
+        private: route_private(state),
     }));
 }
 
@@ -266,6 +263,7 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
     let Some(props) = expect_props(state, &["gateway", "namespace"], route.span) else {
         return;
     };
+    let private = route_private(state);
 
     let name;
     if let Some(n) = read_variable(state, "name").1 {
@@ -297,6 +295,11 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
 
     let (service, port) = visit_service_target(&route.target);
 
+    let Some(private_middleware_name) = read_variable(state, "private_middleware_name").1 else {
+        throw(state, "no private middleware name defined", route.span);
+        return;
+    };
+
     state.routes.push(RouteResult::HTTP(HTTPRoute {
         name,
         hostname: route.hostname.text.to_string(),
@@ -307,6 +310,7 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
             namespace: namespace,
         },
         namespace: props["namespace"].to_string().unwrap(),
+        private: route_private(state),
     }));
 }
 
