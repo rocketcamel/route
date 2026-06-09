@@ -1,3 +1,4 @@
+mod analyze;
 mod ast;
 mod config;
 mod error;

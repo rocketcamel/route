@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::treewalker::{HTTPRoute, TCPRoute};
+use crate::{
+    config::RouteConfig,
+    treewalker::{HTTPRoute, TCPRoute},
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

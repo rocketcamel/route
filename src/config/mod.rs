@@ -8,8 +8,14 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 pub struct RouteConfig {
+    pub general: Option<General>,
     pub input: Input,
     pub output: Output,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct General {
+    pub private_middleware_name: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
