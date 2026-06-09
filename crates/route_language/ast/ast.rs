@@ -38,6 +38,7 @@ pub struct Span {
     pub start: usize,
     pub end: usize,
     pub line: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone)]

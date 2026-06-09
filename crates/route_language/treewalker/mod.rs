@@ -2,12 +2,11 @@ mod value;
 
 use std::{collections::HashMap, mem, rc::Rc};
 
-use crate::{
-    ast::ast::{
-        Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget,
-        Span, Statement, TableField,
-    },
-    treewalker::value::Value,
+pub use value::Value;
+
+use crate::ast::ast::{
+    Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span,
+    Statement, TableField,
 };
 
 #[derive(Debug)]
@@ -24,22 +23,15 @@ pub struct Issue {
 }
 
 #[derive(Debug)]
-pub enum RouteResult {
-    HTTP(HTTPRoute),
-    TCP(TCPRoute),
-}
-
-#[derive(Debug)]
 pub struct ExecutionState {
     pub globals: HashMap<String, String>,
     pub scope: Scope,
     pub issues: Vec<Issue>,
-    pub routes: Vec<RouteResult>,
+    pub routes: Vec<RawRoute>,
 }
 
 pub struct ExecutionResult {
-    pub http: Vec<HTTPRoute>,
-    pub tcp: Vec<TCPRoute>,
+    pub routes: Vec<RawRoute>,
 }
 
 impl<'a> Route<'a> {
@@ -62,33 +54,20 @@ impl<'a> Statement<'a> {
 }
 
 #[derive(Debug)]
-pub struct HTTPRoute {
-    pub name: String,
-    pub hostname: String,
-    pub service: String,
-    pub port: usize,
-    pub namespace: String,
-    pub gateway: Gateway,
-    pub private: bool,
-    pub private_middleware_name: Rc<str>,
+pub enum RouteKind {
+    HTTP,
+    TCP,
 }
 
 #[derive(Debug)]
-pub struct TCPRoute {
-    pub name: String,
+pub struct RawRoute {
+    pub kind: RouteKind,
+    pub hostname: Option<String>,
     pub service: String,
     pub port: usize,
-    pub namespace: String,
-    pub gateway: Gateway,
-    pub entrypoint: String,
-    pub private: bool,
-    pub private_middleware_name: Rc<str>,
-}
+    pub span: Span,
 
-#[derive(Debug)]
-pub struct Gateway {
-    pub name: String,
-    pub namespace: String,
+    pub properties: HashMap<String, Value>,
 }
 
 fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
@@ -114,6 +93,7 @@ fn read_variable<'a>(state: &'a ExecutionState, var: &str) -> (Option<&'a Scope>
 
 fn write_variable(state: &mut ExecutionState, var: String, new: Value) {
     let mut active = Some(&mut state.scope);
+
     while let Some(scope) = active {
         if scope.vars.contains_key(&var) {
             scope.vars.insert(var, new);
@@ -209,109 +189,81 @@ fn route_private(state: &mut ExecutionState) -> bool {
 }
 
 fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
+    let parent = mem::replace(
+        &mut state.scope,
+        Scope {
+            up: None,
+            root: false,
+            vars: HashMap::new(),
+        },
+    );
+    state.scope.up = Some(Box::new(parent));
+
     evaluate_route(state, &route.properties);
 
-    let Some(props) = expect_props(state, &["gateway", "namespace", "entrypoint"], route.span)
-    else {
-        return;
-    };
+    let (service, port) = visit_service_target(&route.target);
+    let mut properties = HashMap::new();
+    let mut scope_ref = Some(&state.scope);
 
-    let name;
-    if let Some(n) = read_variable(state, "name").1 {
-        let value = n.to_string();
-        if value.is_none() {
-            throw(state, "route has no name definition", route.span);
-            return;
+    while let Some(scope) = scope_ref {
+        for (k, v) in &scope.vars {
+            properties.entry(k.clone()).or_insert_with(|| v.clone());
         }
-        name = value.unwrap()
-    } else {
-        name = route.target.service.text.to_string()
+
+        scope_ref = scope.up.as_deref()
     }
 
-    let (gateway, namespace) = match &props["gateway"] {
-        Value::Table(table) => {
-            let gw = table.get("name").and_then(|v| v.to_string()).unwrap();
-            let ns = table.get("namespace").and_then(|v| v.to_string()).unwrap();
-
-            (gw, ns)
-        }
-        _ => {
-            throw(state, "gateway must be a table", route.span);
-            return;
-        }
-    };
-
-    let (service, port) = visit_service_target(&route.target);
-
-    state.routes.push(RouteResult::TCP(TCPRoute {
-        name,
+    state.routes.push(RawRoute {
+        kind: RouteKind::TCP,
+        hostname: None,
         service,
         port,
-        gateway: Gateway {
-            name: gateway,
-            namespace: namespace,
-        },
-        namespace: props["namespace"].to_string().unwrap(),
-        entrypoint: props["entrypoint"].to_string().unwrap(),
-        private: route_private(state),
-    }));
+        span: route.span,
+        properties,
+    });
+
+    if let Some(parent) = state.scope.up.take() {
+        state.scope = *parent
+    }
 }
 
 fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
+    let parent = mem::replace(
+        &mut state.scope,
+        Scope {
+            up: None,
+            root: false,
+            vars: HashMap::new(),
+        },
+    );
+    state.scope.up = Some(Box::new(parent));
+
     evaluate_route(state, &route.properties);
 
-    let Some(props) = expect_props(state, &["gateway", "namespace"], route.span) else {
-        return;
-    };
-    let private = route_private(state);
+    let (service, port) = visit_service_target(&route.target);
+    let mut properties = HashMap::new();
+    let mut scope_ref = Some(&state.scope);
 
-    let name;
-    if let Some(n) = read_variable(state, "name").1 {
-        let value = n.to_string();
-        if value.is_none() {
-            throw(state, "route has no name definition", route.span);
-            return;
+    while let Some(scope) = scope_ref {
+        for (k, v) in &scope.vars {
+            properties.entry(k.clone()).or_insert_with(|| v.clone());
         }
-        name = value.unwrap()
-    } else {
-        let Some(n) = route.hostname.text.split(".").next() else {
-            return;
-        };
-        name = n.to_string()
+
+        scope_ref = scope.up.as_deref()
     }
 
-    let (gateway, namespace) = match &props["gateway"] {
-        Value::Table(table) => {
-            let gw = table.get("name").and_then(|v| v.to_string()).unwrap();
-            let ns = table.get("namespace").and_then(|v| v.to_string()).unwrap();
-
-            (gw, ns)
-        }
-        _ => {
-            throw(state, "gateway must be a table", route.span);
-            return;
-        }
-    };
-
-    let (service, port) = visit_service_target(&route.target);
-
-    let Some(private_middleware_name) = read_variable(state, "private_middleware_name").1 else {
-        throw(state, "no private middleware name defined", route.span);
-        return;
-    };
-
-    state.routes.push(RouteResult::HTTP(HTTPRoute {
-        name,
-        hostname: route.hostname.text.to_string(),
+    state.routes.push(RawRoute {
+        kind: RouteKind::HTTP,
+        hostname: Some(route.hostname.text.to_string()),
         service,
         port,
-        gateway: Gateway {
-            name: gateway,
-            namespace: namespace,
-        },
-        namespace: props["namespace"].to_string().unwrap(),
-        private: route_private(state),
-    }));
+        span: route.span,
+        properties,
+    });
+
+    if let Some(parent) = state.scope.up.take() {
+        state.scope = *parent
+    }
 }
 
 fn visit_stat_route(state: &mut ExecutionState, route: &Route) {

@@ -1,8 +1,5 @@
-mod ast;
 mod config;
 mod error;
-mod output;
-mod treewalker;
 
 use std::path::PathBuf;
 
@@ -10,12 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
-use crate::{
-    ast::Parser as RtParser,
-    config::RouteConfig,
-    output::render_output,
-    treewalker::{create_state, execute},
-};
+use crate::config::RouteConfig;
 
 #[derive(Parser, Debug)]
 pub struct Args {

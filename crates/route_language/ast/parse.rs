@@ -12,6 +12,7 @@ struct Lexer<'a> {
     pos: usize,
     len: usize,
     line: usize,
+    col: usize,
 }
 
 pub struct Parser<'a> {
@@ -37,6 +38,7 @@ impl<'a> Lexer<'a> {
             pos: 0,
             len: input.len(),
             line: 1,
+            col: 1,
         }
     }
 
@@ -48,7 +50,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn bump(&mut self) {
-        self.pos = self.len.min(self.pos + 1)
+        let c = self.input[self.pos];
+        self.pos = self.len.min(self.pos + 1);
+
+        if c == b'\n' {
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.col += 1
+        }
     }
 
     fn bump_peek(&mut self) -> u8 {
@@ -125,18 +135,19 @@ impl<'a> Lexer<'a> {
             }
             c if is_whitespace(c) => {
                 self.bump();
-                if c == b'\n' {
-                    self.line += 1
-                }
                 TokenKind::Whitespace
             }
-            _ => TokenKind::Error,
+            _ => {
+                self.bump();
+                TokenKind::Error
+            }
         }
     }
 
     fn next_token(&mut self) -> Result<Token<'a>> {
         let mut start = self.pos;
         let mut initial_line = self.line;
+        let initial_col = self.col;
         let mut kind = self.read_kind();
 
         while kind == TokenKind::Whitespace {
@@ -145,25 +156,23 @@ impl<'a> Lexer<'a> {
             kind = self.read_kind();
         }
 
+        let span = Span {
+            start: start,
+            end: self.pos,
+            line: initial_line,
+            col: initial_col,
+        };
+
         if kind == TokenKind::Error {
-            let value = str::from_utf8(&self.input[start..=self.pos]).unwrap();
+            let value = str::from_utf8(&self.input[start..self.pos]).unwrap();
             return Err(Error::parse(
-                format!("{value} into a token"),
-                initial_line,
-                self.pos - start,
+                format!("cannot parse '{value}' into a token"),
+                span,
             ));
         }
         let text = str::from_utf8(&self.input[start..self.pos]).unwrap();
 
-        Ok(Token {
-            kind,
-            text,
-            span: Span {
-                start,
-                end: self.pos,
-                line: initial_line,
-            },
-        })
+        Ok(Token { kind, text, span })
     }
 }
 
@@ -241,8 +250,7 @@ impl<'a> Parser<'a> {
     fn expected_but(&self, kind: &str) -> Error {
         Error::parse(
             format!("expected {}, but got {}", kind, display(self.current_token)),
-            self.current_token.span.line,
-            self.current_token.span.start,
+            self.current_token.span,
         )
     }
 
@@ -268,6 +276,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: value.span().end,
                 line: start.line,
+                col: start.col,
             },
         })
     }
@@ -314,6 +323,7 @@ impl<'a> Parser<'a> {
                     start: start.start,
                     end,
                     line: start.line,
+                    col: start.col,
                 },
             });
         }
@@ -330,6 +340,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: right.span.end,
                 line: start.line,
+                col: start.col,
             },
         }))
     }
@@ -388,6 +399,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: name.span.end,
                 line: start.line,
+                col: start.col,
             },
         })
     }
@@ -406,6 +418,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: value.span().end,
                 line: start.line,
+                col: start.col,
             },
         }))
     }
@@ -425,6 +438,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: value.span().end,
                 line: start.line,
+                col: start.col,
             },
         }))
     }
@@ -444,8 +458,7 @@ impl<'a> Parser<'a> {
                         "provided invalid number '{}', only integers are supported",
                         port_token.text
                     ),
-                    start.line,
-                    start.start,
+                    start,
                 ));
             }
         };
@@ -457,6 +470,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: port_token.span.end,
                 line: start.line,
+                col: start.col,
             },
         })
     }
@@ -477,6 +491,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end,
                 line: start.line,
+                col: start.col,
             },
         })
     }
@@ -495,6 +510,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: properties.span.end,
                 line: start.line,
+                col: start.col,
             },
         })
     }
@@ -515,6 +531,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: properties.span.end,
                 line: start.line,
+                col: start.col,
             },
         })
     }
@@ -551,6 +568,7 @@ impl<'a> Parser<'a> {
                 start: start.start,
                 end: self.current_token.span.end,
                 line: start.line,
+                col: start.col,
             },
         })
     }

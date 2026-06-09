@@ -1,3 +1,6 @@
+[general]
+private_middleware_name = "private-networks"
+
 [input]
 module_path = "./main.rt"
 
