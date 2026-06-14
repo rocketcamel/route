@@ -7,7 +7,7 @@ use crate::{
     error::{Error, Result},
 };
 
-struct Lexer<'a> {
+pub struct Lexer<'a> {
     input: &'a [u8],
     pos: usize,
     len: usize,
