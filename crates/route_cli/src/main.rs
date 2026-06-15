@@ -8,10 +8,12 @@ use console::style;
 use thiserror_ext::AsReport;
 
 use language::{
-    analyze::analyze_routes, ast::Parser as RtParser, treewalker::{self, create_state, execute}
+    analyze::{self, analyze_routes},
+    ast::{Parser as RtParser, ast::Span},
+    treewalker::{self, create_state, execute},
 };
 
-use crate::config::RouteConfig;
+use crate::{config::RouteConfig, error::Error};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -24,7 +26,24 @@ enum Commands {
     GenerateRoutes,
 }
 
-fn display_issues<I>(input: &[u8], issues: &[I]) {
+pub trait Issue {
+    fn why(&self) -> &str;
+    fn span(&self) -> Span;
+}
+
+#[rustfmt::skip]
+impl Issue for treewalker::Issue {
+    fn span(&self) -> Span { self.span }
+    fn why(&self) -> &str { &self.why }
+}
+
+#[rustfmt::skip]
+impl Issue for analyze::Issue {
+    fn span(&self) -> Span { self.span }
+    fn why(&self) -> &str { &self.why }
+}
+
+fn display_issues<I: Issue>(input: &[u8], issues: &[I]) {
     let source = String::from_utf8_lossy(input);
     let lines: Vec<&str> = source.lines().collect();
 
@@ -36,22 +55,30 @@ fn display_issues<I>(input: &[u8], issues: &[I]) {
     );
 
     for (idx, issue) in issues.iter().enumerate() {
-        let line_number = issue.span.line;
-        let col_number = issue.span.col.max(1);
+        let span = issue.span();
+
+        let line_number = span.line;
+        let col_number = span.col.max(1);
         let line = lines.get(line_number - 1).copied().unwrap_or("");
 
-        eprintln!("{}) {}:{} {}", idx + 1, line_number, col_number, issue.why);
+        eprintln!(
+            "{}) {}:{} {}",
+            idx + 1,
+            line_number,
+            col_number,
+            issue.why()
+        );
         eprintln!("   {}", line);
 
         let caret_padding = " ".repeat(col_number.saturating_sub(1));
-        let width = issue.span.end.saturating_sub(issue.span.start).max(1);
+        let width = span.end.saturating_sub(span.start).max(1);
         let underline = format!("^{}", "~".repeat(width.saturating_sub(1)));
 
         eprintln!("   {}{}", caret_padding, underline);
     }
 }
 
-fn throw<T, I>(input: &[u8], issues: &[I]) -> crate::error::Result<T> {
+fn throw<T, I: Issue>(input: &[u8], issues: &[I]) -> crate::error::Result<T> {
     display_issues(input, issues);
     Err(crate::error::Error::execution(issues.len()))
 }
@@ -67,15 +94,16 @@ fn run() -> crate::error::Result<()> {
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
 
-            let execution = execute(create_state(), &ast);
-
-            if let Err(issues) = execution {
+            let execution = execute(create_state(), &ast).map_err(|issues| {
                 display_issues(&bytes, &issues);
+                Error::execution(issues.len())
+            })?;
 
-                return Ok(())
+            let analysis = analyze_routes(&execution.routes);
+            if !analysis.issues.is_empty() {
+                display_issues(&bytes, &analysis.issues);
+                return Err(Error::execution(analysis.issues.len()));
             }
-
-            let analysis = analyze_routes()
         }
     }
 

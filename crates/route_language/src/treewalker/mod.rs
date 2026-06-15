@@ -157,29 +157,6 @@ fn evaluate_route(state: &mut ExecutionState, block: &Block) {
     }
 }
 
-fn expect_props(
-    state: &mut ExecutionState,
-    names: &[&str],
-    span: Span,
-) -> Option<HashMap<String, Value>> {
-    let mut props = HashMap::new();
-    let mut result_ok = true;
-
-    for &name in names {
-        match read_variable(state, name).1 {
-            Some(value) => {
-                props.insert(name.to_string(), value);
-            }
-            _ => {
-                throw(state, format!("missing required property {name}"), span);
-                result_ok = false;
-            }
-        }
-    }
-
-    result_ok.then_some(props)
-}
-
 fn route_private(state: &mut ExecutionState) -> bool {
     let Some(property) = read_variable(state, "private").1 else {
         return true;
