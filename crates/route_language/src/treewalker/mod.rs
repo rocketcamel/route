@@ -18,14 +18,8 @@ pub struct Scope {
 
 #[derive(Debug)]
 pub struct Issue {
-    why: String,
-    span: Span,
-}
-
-#[derive(Debug)]
-pub enum RouteResult {
-    HTTP(HTTPRoute),
-    TCP(TCPRoute),
+    pub why: String,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -37,8 +31,7 @@ pub struct ExecutionState {
 }
 
 pub struct ExecutionResult {
-    pub http: Vec<HTTPRoute>,
-    pub tcp: Vec<TCPRoute>,
+    pub routes: Vec<RawRoute>,
 }
 
 impl<'a> Route<'a> {
@@ -60,29 +53,7 @@ impl<'a> Statement<'a> {
     }
 }
 
-#[derive(Debug)]
-pub struct HTTPRoute {
-    pub name: String,
-    pub hostname: String,
-    pub service: String,
-    pub port: usize,
-    pub namespace: String,
-    pub gateway: Gateway,
-    pub private: bool,
-}
-
-#[derive(Debug)]
-pub struct TCPRoute {
-    pub name: String,
-    pub service: String,
-    pub port: usize,
-    pub namespace: String,
-    pub gateway: Gateway,
-    pub entrypoint: String,
-    pub private: bool,
-}
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RouteKind {
     HTTP,
     TCP,
@@ -91,18 +62,12 @@ pub enum RouteKind {
 #[derive(Debug)]
 pub struct RawRoute {
     pub kind: RouteKind,
-    pub hostname: Option<String>,
-    pub service: String,
+    pub hostname: Option<Rc<str>>,
+    pub service: Rc<str>,
     pub port: usize,
     pub span: Span,
 
     pub properties: HashMap<String, Value>,
-}
-
-#[derive(Debug)]
-pub struct Gateway {
-    pub name: String,
-    pub namespace: String,
 }
 
 fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
@@ -145,7 +110,7 @@ fn evaluate_expression(expression: &Expression) -> Value {
         Expression::Boolean(node) => Value::Bool(node.token.text == "true"),
         Expression::Nil(_) => Value::Nil,
         Expression::Number(node) => Value::Number(node.token.text.parse().unwrap()),
-        Expression::String(node) => Value::String(node.token.text.to_string()),
+        Expression::String(node) => Value::String(node.token.text.into()),
         Expression::Table(node) => {
             let mut table = HashMap::new();
 
@@ -174,8 +139,8 @@ fn visit_stat_assign(state: &mut ExecutionState, assign: &Assign) {
     write_variable(state, key.to_string(), value);
 }
 
-fn visit_service_target(target: &ServiceTarget) -> (String, usize) {
-    let service = target.service.text.to_string();
+fn visit_service_target(target: &ServiceTarget) -> (Rc<str>, usize) {
+    let service = target.service.text.into();
     let port = target.port;
 
     (service, port)
@@ -190,29 +155,6 @@ fn evaluate_route(state: &mut ExecutionState, block: &Block) {
             }
         }
     }
-}
-
-fn expect_props(
-    state: &mut ExecutionState,
-    names: &[&str],
-    span: Span,
-) -> Option<HashMap<String, Value>> {
-    let mut props = HashMap::new();
-    let mut result_ok = true;
-
-    for &name in names {
-        match read_variable(state, name).1 {
-            Some(value) => {
-                props.insert(name.to_string(), value);
-            }
-            _ => {
-                throw(state, format!("missing required property {name}"), span);
-                result_ok = false;
-            }
-        }
-    }
-
-    result_ok.then_some(props)
 }
 
 fn route_private(state: &mut ExecutionState) -> bool {
@@ -289,7 +231,7 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
 
     state.routes.push(RawRoute {
         kind: RouteKind::HTTP,
-        hostname: Some(route.hostname.text.to_string()),
+        hostname: Some(route.hostname.text.into()),
         service,
         port,
         span: route.span,
@@ -361,17 +303,9 @@ pub fn execute(mut state: ExecutionState, ast: &Ast) -> Result<ExecutionResult, 
         return Err(state.issues);
     }
 
-    let mut result_ok = ExecutionResult {
-        http: Vec::new(),
-        tcp: Vec::new(),
+    let result_ok = ExecutionResult {
+        routes: state.routes,
     };
-
-    for route in state.routes {
-        match route {
-            RouteResult::HTTP(node) => result_ok.http.push(node),
-            RouteResult::TCP(node) => result_ok.tcp.push(node),
-        }
-    }
 
     Ok(result_ok)
 }
