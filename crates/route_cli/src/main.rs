@@ -1,7 +1,7 @@
 mod config;
 mod error;
 
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use console::style;
@@ -12,6 +12,7 @@ use language::{
     ast::{Parser as RtParser, ast::Span},
     compiler::{Compiler, VMState},
     treewalker::{self, create_state, execute},
+    vm::VirtualMachine,
 };
 
 use crate::{config::RouteConfig, error::Error};
@@ -102,8 +103,16 @@ fn run() -> crate::error::Result<()> {
                 },
                 next_instrucion: 1,
             };
-            let result = compiler.compile(ast);
-            println!("{result:#?}")
+            let instructions = compiler.compile(ast);
+            let mut vm = VirtualMachine {
+                locals: Vec::new(),
+                globals: HashMap::new(),
+                instruction_at: 0,
+                instruction_end: instructions.len() - 1,
+                stack: Vec::new(),
+                n: 0,
+            };
+            vm.run(instructions);
 
             // let execution = execute(create_state(), &ast).map_err(|issues| {
             //     display_issues(&bytes, &issues);

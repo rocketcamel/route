@@ -20,16 +20,12 @@ pub struct InstructionPushTable {
     pub alloc: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct InstructionSetLocal {
-    pub index: usize,
-}
-
 #[derive(Debug, Clone)]
 pub struct InstructionPushRoute {
     pub r#type: RouteKind,
     pub service_target: String,
     pub service_port: usize,
+    pub hostname: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +39,7 @@ pub enum Instruction {
     PushTable(InstructionPushTable),
     PushRoute(InstructionPushRoute),
 
-    SetLocal(InstructionSetLocal),
+    SetLocal(usize),
     SetGlobal(String),
     SetTable,
     SetRouteProperty(String),
@@ -80,7 +76,7 @@ impl Compiler {
         let index = self.vm_state.locals.iter().position(|v| v == key);
 
         if let Some(index) = index {
-            self.INSERT(Instruction::SetLocal(InstructionSetLocal { index }));
+            self.INSERT(Instruction::SetLocal(index));
         } else {
             self.INSERT(Instruction::SetGlobal(key.to_string()));
         }
@@ -137,7 +133,7 @@ impl Compiler {
     fn compile_var(&mut self, node: LetStatement) {
         self.compile_expression(node.value);
         let slot = self.DEFINE_LOCAL(node.root);
-        self.INSERT(Instruction::SetLocal(InstructionSetLocal { index: slot }));
+        self.INSERT(Instruction::SetLocal(slot));
     }
 
     fn compile_route_block(&mut self, block: Block) {
@@ -159,13 +155,24 @@ impl Compiler {
             r#type: RouteKind::TCP,
             service_target: tcp.target.service.text.to_string(),
             service_port: tcp.target.port,
+            hostname: None,
         }));
 
         self.compile_route_block(tcp.properties);
         self.INSERT(Instruction::SetRoute);
     }
 
-    fn compile_route_http(&mut self, http: RouteHTTP) {}
+    fn compile_route_http(&mut self, http: RouteHTTP) {
+        self.INSERT(Instruction::PushRoute(InstructionPushRoute {
+            r#type: RouteKind::HTTP,
+            service_target: http.target.service.text.to_string(),
+            service_port: http.target.port,
+            hostname: Some(http.hostname.text.to_string()),
+        }));
+
+        self.compile_route_block(http.properties);
+        self.INSERT(Instruction::SetRoute);
+    }
 
     fn compile_route(&mut self, route: Route) {
         match route {
