@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Token<'a> {
     pub kind: TokenKind,
@@ -31,6 +33,51 @@ pub enum TokenKind {
     Eof,
     Newline,
     Error,
+}
+
+impl Display for TokenKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            TokenKind::Arrow => "->",
+            TokenKind::LBrace => "{",
+            TokenKind::RBrace => "}",
+            TokenKind::Colon => ":",
+            TokenKind::Identifier => "identifier",
+            TokenKind::Number => "number",
+            TokenKind::Equals => "=",
+            TokenKind::Comma => ",",
+
+            TokenKind::True => "true",
+            TokenKind::False => "false",
+            TokenKind::Nil => "nil",
+            TokenKind::Tcp => "tcp",
+            TokenKind::Let => "let",
+            TokenKind::Route => "route",
+
+            TokenKind::Whitespace => "whitespace",
+            TokenKind::Comment => "comment",
+
+            TokenKind::Eof => "eof",
+            TokenKind::Newline => "\n",
+            TokenKind::Error => "error",
+        };
+
+        write!(f, "{text}")
+    }
+}
+
+impl<'a> Display for Token<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = self.kind;
+
+        if kind == TokenKind::Identifier {
+            write!(f, "{}", self.text)
+        } else if kind == TokenKind::Error {
+            write!(f, "error {}", self.text)
+        } else {
+            write!(f, "{kind}")
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

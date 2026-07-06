@@ -10,6 +10,7 @@ use thiserror_ext::AsReport;
 use language::{
     analyze::{self, analyze_routes},
     ast::{Parser as RtParser, ast::Span},
+    compiler::{Compiler, VMState},
     treewalker::{self, create_state, execute},
 };
 
@@ -94,16 +95,26 @@ fn run() -> crate::error::Result<()> {
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
 
-            let execution = execute(create_state(), &ast).map_err(|issues| {
-                display_issues(&bytes, &issues);
-                Error::execution(issues.len())
-            })?;
+            let mut compiler = Compiler {
+                vm_state: VMState {
+                    instructions: Vec::new(),
+                    locals: Vec::new(),
+                },
+                next_instrucion: 1,
+            };
+            let result = compiler.compile(ast);
+            println!("{result:#?}")
 
-            let analysis = analyze_routes(&execution.routes);
-            if !analysis.issues.is_empty() {
-                display_issues(&bytes, &analysis.issues);
-                return Err(Error::execution(analysis.issues.len()));
-            }
+            // let execution = execute(create_state(), &ast).map_err(|issues| {
+            //     display_issues(&bytes, &issues);
+            //     Error::execution(issues.len())
+            // })?;
+
+            // let analysis = analyze_routes(&execution.routes);
+            // if !analysis.issues.is_empty() {
+            //     display_issues(&bytes, &analysis.issues);
+            //     return Err(Error::execution(analysis.issues.len()));
+            // }
         }
     }
 
