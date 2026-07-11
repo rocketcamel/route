@@ -137,6 +137,14 @@ impl Compiler {
     }
 
     fn compile_route_block(&mut self, block: Block) {
+        let mut inherit = |name: &str| {
+            self.GET_VALUE(name);
+            self.INSERT(Instruction::SetRouteProperty(name.to_string()));
+        };
+
+        inherit("entrypoint");
+        inherit("gateway");
+
         for statement in block.body {
             match statement {
                 Statement::Assign(node) => {
