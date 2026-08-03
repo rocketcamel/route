@@ -1,6 +1,6 @@
 use crate::ast::ast::{
     Assign, Ast, Block, Expression, ExpressionTable, LetStatement, Route, RouteHTTP, RouteTCP,
-    Statement, TableField, TokenKind, VarRoot,
+    Span, Statement, TableField, TokenKind, VarRoot,
 };
 
 #[derive(Debug, Clone)]
@@ -9,7 +9,7 @@ pub struct VMState {
     pub locals: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RouteKind {
     HTTP,
     TCP,
@@ -26,6 +26,7 @@ pub struct InstructionPushRoute {
     pub service_target: String,
     pub service_port: usize,
     pub hostname: Option<String>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +165,7 @@ impl Compiler {
             service_target: tcp.target.service.text.to_string(),
             service_port: tcp.target.port,
             hostname: None,
+            span: tcp.span,
         }));
 
         self.compile_route_block(tcp.properties);
@@ -176,6 +178,7 @@ impl Compiler {
             service_target: http.target.service.text.to_string(),
             service_port: http.target.port,
             hostname: Some(http.hostname.text.to_string()),
+            span: http.span,
         }));
 
         self.compile_route_block(http.properties);

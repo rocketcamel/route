@@ -1,9 +1,9 @@
 mod config;
 mod error;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
@@ -28,63 +28,6 @@ enum Commands {
     GenerateRoutes,
 }
 
-pub trait Issue {
-    fn why(&self) -> &str;
-    fn span(&self) -> Span;
-}
-
-#[rustfmt::skip]
-impl Issue for treewalker::Issue {
-    fn span(&self) -> Span { self.span }
-    fn why(&self) -> &str { &self.why }
-}
-
-#[rustfmt::skip]
-impl Issue for analyze::Issue {
-    fn span(&self) -> Span { self.span }
-    fn why(&self) -> &str { &self.why }
-}
-
-fn display_issues<I: Issue>(input: &[u8], issues: &[I]) {
-    let source = String::from_utf8_lossy(input);
-    let lines: Vec<&str> = source.lines().collect();
-
-    eprintln!(
-        "{}: route file has {} issue{}",
-        style("error").red(),
-        issues.len(),
-        if issues.len() == 1 { "" } else { "s" }
-    );
-
-    for (idx, issue) in issues.iter().enumerate() {
-        let span = issue.span();
-
-        let line_number = span.line;
-        let col_number = span.col.max(1);
-        let line = lines.get(line_number - 1).copied().unwrap_or("");
-
-        eprintln!(
-            "{}) {}:{} {}",
-            idx + 1,
-            line_number,
-            col_number,
-            issue.why()
-        );
-        eprintln!("   {}", line);
-
-        let caret_padding = " ".repeat(col_number.saturating_sub(1));
-        let width = span.end.saturating_sub(span.start).max(1);
-        let underline = format!("^{}", "~".repeat(width.saturating_sub(1)));
-
-        eprintln!("   {}{}", caret_padding, underline);
-    }
-}
-
-fn throw<T, I: Issue>(input: &[u8], issues: &[I]) -> crate::error::Result<T> {
-    display_issues(input, issues);
-    Err(crate::error::Error::execution(issues.len()))
-}
-
 fn run() -> crate::error::Result<()> {
     let cli = Args::parse();
 
@@ -103,6 +46,7 @@ fn run() -> crate::error::Result<()> {
                 },
                 next_instrucion: 1,
             };
+
             let instructions = compiler.compile(ast);
             let mut vm = VirtualMachine {
                 locals: Vec::new(),
@@ -111,8 +55,20 @@ fn run() -> crate::error::Result<()> {
                 instruction_end: instructions.len() - 1,
                 stack: Vec::new(),
                 n: 0,
+                routes: Vec::new(),
             };
-            vm.run(instructions);
+
+            let routes = vm.run(instructions);
+            let analysis = analyze_routes(&routes);
+
+            if !analysis.issues.is_empty() {
+                eprintln!("issues: {:#?}", analysis.issues)
+            }
+
+            println!(
+                "analysis: HTTP: {:#?}, TCP: {:#?}",
+                analysis.http, analysis.tcp
+            )
 
             // let execution = execute(create_state(), &ast).map_err(|issues| {
             //     display_issues(&bytes, &issues);

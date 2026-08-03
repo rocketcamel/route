@@ -1,6 +1,9 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, fmt::Display, rc::Rc};
 
-use crate::compiler::{Instruction, RouteKind};
+use crate::{
+    ast::ast::Span,
+    compiler::{Instruction, RouteKind},
+};
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -12,6 +15,32 @@ pub enum Value {
     Route(RawRoute),
 }
 
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Value::Boolean(_) => "bool",
+            Value::Nil => "nil",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Table(_) => "table",
+            Value::Route(_) => "route",
+        };
+
+        write!(f, "{text}")
+    }
+}
+
+impl Value {
+    pub fn to_string(&self) -> Option<Rc<str>> {
+        match self {
+            Value::Boolean(n) => Some(n.to_string().into()),
+            Value::String(n) => Some(n.clone()),
+            Value::Number(n) => Some(n.to_string().into()),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RawRoute {
     pub kind: RouteKind,
@@ -19,6 +48,7 @@ pub struct RawRoute {
     pub service_target: Rc<str>,
     pub port: usize,
     pub properties: HashMap<String, Value>,
+    pub span: Span,
 }
 
 pub struct VirtualMachine {
@@ -28,6 +58,7 @@ pub struct VirtualMachine {
     pub instruction_end: usize,
     pub stack: Vec<Value>,
     pub n: usize,
+    pub routes: Vec<RawRoute>,
 }
 
 impl VirtualMachine {
@@ -71,6 +102,7 @@ impl VirtualMachine {
                 service_target: route.service_target.into(),
                 port: route.service_port,
                 properties: HashMap::new(),
+                span: route.span,
             })),
 
             Instruction::SetLocal(index) => {
@@ -106,16 +138,17 @@ impl VirtualMachine {
                 let Value::Route(route) = self.POP() else {
                     unreachable!()
                 };
-
-                println!("resolved route: {route:?}")
+                self.routes.push(route);
             }
         }
     }
 
-    pub fn run(&mut self, instructions: Vec<Instruction>) {
+    pub fn run(&mut self, instructions: Vec<Instruction>) -> Vec<RawRoute> {
         while self.instruction_at <= self.instruction_end {
             self.process(instructions[self.instruction_at].clone());
             self.instruction_at += 1
         }
+
+        return self.routes.clone();
     }
 }

@@ -2,9 +2,11 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     ast::ast::Span,
-    treewalker::{RawRoute, RouteKind, Value},
+    compiler::RouteKind,
+    vm::{RawRoute, Value},
 };
 
+#[derive(Debug)]
 pub struct Issue {
     pub why: String,
     pub span: Span,
@@ -73,7 +75,7 @@ fn expect_string(state: &mut Analysis, route: &RawRoute, name: &str) -> Option<R
     }
 }
 
-fn expect_number(state: &mut Analysis, route: &RawRoute, name: &str) -> Option<i64> {
+fn expect_number(state: &mut Analysis, route: &RawRoute, name: &str) -> Option<f64> {
     let value = expect(state, route, name)?;
 
     match value {
@@ -188,7 +190,7 @@ fn analyze_http(state: &mut Analysis, route: &RawRoute) -> Option<HTTPRoute> {
         namespace,
         gateway,
         port: route.port,
-        service: route.service.clone(),
+        service: route.service_target.clone(),
         private: false,
     })
 }
@@ -205,7 +207,7 @@ fn analyze_tcp(state: &mut Analysis, route: &RawRoute) -> Option<TCPRoute> {
         entrypoint,
         gateway,
         port: route.port,
-        service: route.service.clone(),
+        service: route.service_target.clone(),
         private: false,
     })
 }
