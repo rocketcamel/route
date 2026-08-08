@@ -1,6 +1,7 @@
+use language::analyze::{HTTPRoute, TCPRoute};
 use serde::Serialize;
 
-use crate::treewalker::{HTTPRoute, TCPRoute};
+use crate::config::RouteConfig;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,15 +95,16 @@ pub struct ParentRef<'a> {
     pub namespace: &'a str,
 }
 
-pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
+pub fn render_output(config: &RouteConfig, http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
     let mut output = String::new();
+    let private_middleware_name = &config.routes.private_middleware_name;
 
     for route in http {
         if !output.is_empty() {
             output.push_str("---\n");
         }
 
-        let mut filters = vec![];
+        let mut filters = Vec::new();
 
         if route.private {
             filters.push(Filter {
@@ -110,7 +112,7 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
                 extension_ref: ExtensionRef {
                     group: "traefik.io",
                     kind: "Middleware",
-                    name: "private-networks",
+                    name: private_middleware_name,
                 },
             });
         }
@@ -145,6 +147,15 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
             output.push_str("---\n");
         }
 
+        let mut middlewares = Vec::new();
+
+        if route.private {
+            middlewares.push(TCPRouteMiddleware {
+                name: private_middleware_name,
+                namespace: "kube-system",
+            });
+        }
+
         let result = K8sTCPRoute {
             api_version: "traefik.io/v1alpha1",
             kind: "IngressRouteTCP",
@@ -156,9 +167,9 @@ pub fn render_output(http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
                 entry_points: vec![&route.entrypoint],
                 routes: vec![TCPRouteRule {
                     r#match: "HostSNI(`*`)",
-                    middlewares: vec![],
+                    middlewares,
                     services: vec![BackendRef {
-                        name: &route.name,
+                        name: &route.service,
                         port: route.port,
                     }],
                 }],

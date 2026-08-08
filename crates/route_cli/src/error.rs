@@ -13,9 +13,6 @@ pub enum ErrorKind {
 
     #[error(transparent)]
     Language(#[from] language::error::Error),
-
-    #[error("execution failed with {0} issue(s)")]
-    Execution(usize),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

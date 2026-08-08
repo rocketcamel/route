@@ -143,7 +143,22 @@ impl VirtualMachine {
         }
     }
 
+    pub fn create_vm() -> Self {
+        Self {
+            locals: Vec::new(),
+            globals: HashMap::new(),
+            instruction_at: 0,
+            instruction_end: 0,
+            n: 0,
+            stack: Vec::new(),
+            routes: Vec::new(),
+        }
+    }
+
     pub fn run(&mut self, instructions: Vec<Instruction>) -> Vec<RawRoute> {
+        self.instruction_at = 0;
+        self.instruction_end = instructions.len() - 1;
+
         while self.instruction_at <= self.instruction_end {
             self.process(instructions[self.instruction_at].clone());
             self.instruction_at += 1

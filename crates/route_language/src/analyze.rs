@@ -59,6 +59,24 @@ fn expect<'a>(state: &mut Analysis, route: &'a RawRoute, name: &str) -> Option<&
     Some(property)
 }
 
+fn expect_or<'a>(route: &'a RawRoute, name: &str, default: &'a Value) -> &'a Value {
+    let Some(property) = route.properties.get(name) else {
+        return default;
+    };
+
+    property
+}
+
+fn expect_boolean<'a>(route: &'a RawRoute, name: &str) -> Option<bool> {
+    let value = expect_or(route, name, &Value::Boolean(false));
+
+    if let Value::Boolean(bool) = value {
+        Some(*bool)
+    } else {
+        unreachable!()
+    }
+}
+
 fn expect_string(state: &mut Analysis, route: &RawRoute, name: &str) -> Option<Rc<str>> {
     let value = expect(state, route, name)?;
 
@@ -75,6 +93,7 @@ fn expect_string(state: &mut Analysis, route: &RawRoute, name: &str) -> Option<R
     }
 }
 
+#[allow(unused)]
 fn expect_number(state: &mut Analysis, route: &RawRoute, name: &str) -> Option<f64> {
     let value = expect(state, route, name)?;
 
@@ -182,6 +201,7 @@ fn analyze_http(state: &mut Analysis, route: &RawRoute) -> Option<HTTPRoute> {
 
     let name = analyze_name(state, route, &hostname)?;
     let namespace = expect_string(state, route, "namespace")?;
+    let private = expect_boolean(route, "private")?;
     let gateway = analyze_gateway(state, route)?;
 
     Some(HTTPRoute {
@@ -191,7 +211,7 @@ fn analyze_http(state: &mut Analysis, route: &RawRoute) -> Option<HTTPRoute> {
         gateway,
         port: route.port,
         service: route.service_target.clone(),
-        private: false,
+        private,
     })
 }
 
@@ -199,6 +219,7 @@ fn analyze_tcp(state: &mut Analysis, route: &RawRoute) -> Option<TCPRoute> {
     let name = expect_string(state, route, "name")?;
     let namespace = expect_string(state, route, "namespace")?;
     let entrypoint = expect_string(state, route, "entrypoint")?;
+    let private = expect_boolean(route, "private")?;
     let gateway = analyze_gateway(state, route)?;
 
     Some(TCPRoute {
@@ -208,7 +229,7 @@ fn analyze_tcp(state: &mut Analysis, route: &RawRoute) -> Option<TCPRoute> {
         gateway,
         port: route.port,
         service: route.service_target.clone(),
-        private: false,
+        private,
     })
 }
 

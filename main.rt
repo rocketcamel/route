@@ -4,7 +4,6 @@ let gateway = {
 }
 
 let entrypoint = websecure
-let private_middleware_name = private-networks
 
 route git.lucalise.ca -> cgit:22 {
   name = cgit

@@ -1,4 +1,4 @@
-[general]
+[routes]
 private_middleware_name = "private-networks"
 
 [input]

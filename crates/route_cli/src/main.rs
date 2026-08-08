@@ -1,21 +1,19 @@
 mod config;
 mod error;
-
-use std::collections::HashMap;
+mod output;
 
 use clap::{Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
 use language::{
-    analyze::{self, analyze_routes},
-    ast::{Parser as RtParser, ast::Span},
+    analyze::analyze_routes,
+    ast::Parser as RtParser,
     compiler::{Compiler, VMState},
-    treewalker::{self, create_state, execute},
     vm::VirtualMachine,
 };
 
-use crate::{config::RouteConfig, error::Error};
+use crate::{config::RouteConfig, output::render_output};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -48,15 +46,7 @@ fn run() -> crate::error::Result<()> {
             };
 
             let instructions = compiler.compile(ast);
-            let mut vm = VirtualMachine {
-                locals: Vec::new(),
-                globals: HashMap::new(),
-                instruction_at: 0,
-                instruction_end: instructions.len() - 1,
-                stack: Vec::new(),
-                n: 0,
-                routes: Vec::new(),
-            };
+            let mut vm = VirtualMachine::create_vm();
 
             let routes = vm.run(instructions);
             let analysis = analyze_routes(&routes);
@@ -65,21 +55,8 @@ fn run() -> crate::error::Result<()> {
                 eprintln!("issues: {:#?}", analysis.issues)
             }
 
-            println!(
-                "analysis: HTTP: {:#?}, TCP: {:#?}",
-                analysis.http, analysis.tcp
-            )
-
-            // let execution = execute(create_state(), &ast).map_err(|issues| {
-            //     display_issues(&bytes, &issues);
-            //     Error::execution(issues.len())
-            // })?;
-
-            // let analysis = analyze_routes(&execution.routes);
-            // if !analysis.issues.is_empty() {
-            //     display_issues(&bytes, &analysis.issues);
-            //     return Err(Error::execution(analysis.issues.len()));
-            // }
+            let result = render_output(&project, &analysis.http, &analysis.tcp);
+            println!("{result}")
         }
     }
 
