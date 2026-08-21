@@ -2,8 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     ast::ast::Span,
-    compiler::RouteKind,
-    vm::{RawRoute, Value},
+    treewalker::types::{RawRoute, RouteKind, Value},
 };
 
 #[derive(Debug)]

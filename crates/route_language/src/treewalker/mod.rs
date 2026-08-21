@@ -1,14 +1,16 @@
-mod value;
+pub mod types;
 
 use std::{collections::HashMap, mem, rc::Rc};
 
-pub use value::Value;
-
-use crate::ast::ast::{
-    Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span,
-    Statement, TableField,
+use crate::{
+    ast::ast::{
+        Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget,
+        Span, Statement, TableField,
+    },
+    treewalker::types::{RawRoute, RouteKind, Value},
 };
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct Scope {
     up: Option<Box<Scope>>,
@@ -53,23 +55,6 @@ impl<'a> Statement<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum RouteKind {
-    HTTP,
-    TCP,
-}
-
-#[derive(Debug)]
-pub struct RawRoute {
-    pub kind: RouteKind,
-    pub hostname: Option<Rc<str>>,
-    pub service: Rc<str>,
-    pub port: usize,
-    pub span: Span,
-
-    pub properties: HashMap<String, Value>,
-}
-
 fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
     state.issues.push(Issue {
         why: why.into(),
@@ -107,7 +92,7 @@ fn write_variable(state: &mut ExecutionState, var: String, new: Value) {
 
 fn evaluate_expression(expression: &Expression) -> Value {
     match expression {
-        Expression::Boolean(node) => Value::Bool(node.token.text == "true"),
+        Expression::Boolean(node) => Value::Boolean(node.token.text == "true"),
         Expression::Nil(_) => Value::Nil,
         Expression::Number(node) => Value::Number(node.token.text.parse().unwrap()),
         Expression::String(node) => Value::String(node.token.text.into()),
@@ -146,23 +131,39 @@ fn visit_service_target(target: &ServiceTarget) -> (Rc<str>, usize) {
     (service, port)
 }
 
-fn evaluate_route(state: &mut ExecutionState, block: &Block) {
+fn evaluate_route(state: &mut ExecutionState, block: &Block, span: Span) -> HashMap<String, Value> {
+    let mut properties = HashMap::new();
+
+    let mut inherit = |name: &str| {
+        let (_, value) = read_variable(state, name);
+
+        if let Some(value) = value {
+            properties.insert(name.into(), value);
+        } else {
+            throw(
+                state,
+                format!("required property {name} not declared"),
+                span,
+            );
+        }
+    };
+
+    inherit("gateway");
+    inherit("entrypoint");
+
     for statement in &block.body {
         match statement {
-            Statement::Assign(node) => visit_stat_assign(state, node),
+            Statement::Assign(node) => {
+                let value = evaluate_expression(&node.value);
+                properties.insert(node.identifier.text.into(), value);
+            }
             stat => {
                 throw(state, "expected assignment", stat.span());
             }
         }
     }
-}
 
-fn route_private(state: &mut ExecutionState) -> bool {
-    let Some(property) = read_variable(state, "private").1 else {
-        return true;
-    };
-
-    property.truthy()
+    return properties;
 }
 
 fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
@@ -176,28 +177,19 @@ fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
     );
     state.scope.up = Some(Box::new(parent));
 
-    evaluate_route(state, &route.properties);
+    let (service_target, port) = visit_service_target(&route.target);
+    let properties = evaluate_route(state, &route.properties, route.span);
 
-    let (service, port) = visit_service_target(&route.target);
-    let mut properties = HashMap::new();
-    let mut scope_ref = Some(&state.scope);
-
-    while let Some(scope) = scope_ref {
-        for (k, v) in &scope.vars {
-            properties.entry(k.clone()).or_insert_with(|| v.clone());
-        }
-
-        scope_ref = scope.up.as_deref()
-    }
-
-    state.routes.push(RawRoute {
+    let route = RawRoute {
         kind: RouteKind::TCP,
         hostname: None,
-        service,
+        service_target,
         port,
         span: route.span,
         properties,
-    });
+    };
+
+    state.routes.push(route);
 
     if let Some(parent) = state.scope.up.take() {
         state.scope = *parent
@@ -215,28 +207,19 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
     );
     state.scope.up = Some(Box::new(parent));
 
-    evaluate_route(state, &route.properties);
+    let (service_target, port) = visit_service_target(&route.target);
+    let properties = evaluate_route(state, &route.properties, route.span);
 
-    let (service, port) = visit_service_target(&route.target);
-    let mut properties = HashMap::new();
-    let mut scope_ref = Some(&state.scope);
-
-    while let Some(scope) = scope_ref {
-        for (k, v) in &scope.vars {
-            properties.entry(k.clone()).or_insert_with(|| v.clone());
-        }
-
-        scope_ref = scope.up.as_deref()
-    }
-
-    state.routes.push(RawRoute {
+    let route = RawRoute {
         kind: RouteKind::HTTP,
         hostname: Some(route.hostname.text.into()),
-        service,
+        service_target,
         port,
         span: route.span,
         properties,
-    });
+    };
+
+    state.routes.push(route);
 
     if let Some(parent) = state.scope.up.take() {
         state.scope = *parent

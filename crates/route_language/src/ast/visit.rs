@@ -1,5 +1,6 @@
 use crate::ast::ast::{Assign, Ast, Block, Expression, LetStatement, Route, Statement};
 
+#[allow(unused)]
 pub trait Visitor<'a> {
     fn visit_ast(&mut self, ast: &Ast<'a>) {
         self.visit_block(&ast.block);
@@ -19,8 +20,8 @@ pub trait Visitor<'a> {
         }
     }
 
-    fn visit_expression(&mut self, expression: &Expression);
-    fn visit_assign(&mut self, assign: &Assign);
-    fn visit_route(&mut self, route: &Route);
-    fn visit_var(&mut self, var: &LetStatement);
+    fn visit_expression(&mut self, expression: &Expression) {}
+    fn visit_assign(&mut self, assign: &Assign) {}
+    fn visit_route(&mut self, route: &Route) {}
+    fn visit_var(&mut self, var: &LetStatement) {}
 }
