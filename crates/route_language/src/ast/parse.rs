@@ -1,8 +1,9 @@
 use crate::{
     ast::ast::{
-        Assign, Ast, Block, Delimited, Expression, ExpressionTable, LetStatement, Route, RouteHTTP,
-        RouteTCP, Separate, ServiceTarget, SimpleExpression, Span, Statement, TableField,
-        TableFieldNameKey, TableFieldNoKey, Token, TokenKind, VarRoot,
+        Assign, Ast, BinaryOperator, Block, Delimited, Expression, ExpressionBinary,
+        ExpressionTable, ExpressionUnary, LetStatement, Route, RouteHTTP, RouteTCP, Separate,
+        ServiceTarget, SimpleExpression, Span, Statement, TableField, TableFieldNameKey,
+        TableFieldNoKey, Token, TokenKind, UnaryOperator, VarRoot,
     },
     error::{Error, Result},
 };
@@ -80,7 +81,7 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     TokenKind::Arrow
                 } else {
-                    TokenKind::Error
+                    TokenKind::Subtract
                 }
             }
             b'{' => {
@@ -96,8 +97,56 @@ impl<'a> Lexer<'a> {
                 TokenKind::Colon
             }
             b'=' => {
+                let c = self.bump_peek();
+
+                if c == b'=' {
+                    TokenKind::BinaryEquals
+                } else {
+                    TokenKind::Equals
+                }
+            }
+            b'!' => {
+                let c = self.bump_peek();
+
+                if c == b'=' {
+                    TokenKind::NEquals
+                } else {
+                    TokenKind::Not
+                }
+            }
+            b'>' => {
+                let c = self.bump_peek();
+
+                if c == b'=' {
+                    TokenKind::GreaterEquals
+                } else {
+                    TokenKind::Greater
+                }
+            }
+            b'<' => {
+                let c = self.bump_peek();
+
+                if c == b'=' {
+                    TokenKind::LessEquals
+                } else {
+                    TokenKind::Less
+                }
+            }
+            b'+' => {
                 self.bump();
-                TokenKind::Equals
+                TokenKind::Add
+            }
+            b'*' => {
+                self.bump();
+                TokenKind::Multiply
+            }
+            b'/' => {
+                self.bump();
+                TokenKind::Divide
+            }
+            b'^' => {
+                self.bump();
+                TokenKind::Exponent
             }
             b',' => {
                 self.bump();
@@ -127,6 +176,8 @@ impl<'a> Lexer<'a> {
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
                     "nil" => TokenKind::Nil,
+                    "and" => TokenKind::And,
+                    "or" => TokenKind::Or,
                     "tcp" => TokenKind::Tcp,
                     "let" => TokenKind::Let,
                     "route" => TokenKind::Route,
@@ -202,6 +253,8 @@ impl<'a> Expression<'a> {
             | Expression::Nil(node)
             | Expression::Number(node)
             | Expression::String(node) => node.span,
+            Expression::Binary(node) => node.span,
+            Expression::Unary(node) => node.span,
             Expression::Table(node) => node.span,
         }
     }
@@ -266,7 +319,7 @@ impl<'a> Parser<'a> {
 
         let name = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
-        let value = self.parse_expression()?;
+        let value = self.parse_expression(None)?;
 
         Ok(TableFieldNameKey {
             name,
@@ -282,7 +335,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tablefield_nokey(&mut self) -> Result<TableFieldNoKey<'a>> {
-        let value = self.parse_expression()?;
+        let value = self.parse_expression(None)?;
 
         Ok(TableFieldNoKey {
             value: value.clone(),
@@ -345,7 +398,52 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_expression(&mut self) -> Result<Expression<'a>> {
+    fn current_binary_operator(&self) -> Option<BinaryOperator> {
+        if self.current_is(TokenKind::BinaryEquals)
+            || self.current_is(TokenKind::NEquals)
+            || self.current_is(TokenKind::Greater)
+            || self.current_is(TokenKind::Less)
+            || self.current_is(TokenKind::GreaterEquals)
+            || self.current_is(TokenKind::LessEquals)
+            || self.current_is(TokenKind::Add)
+            || self.current_is(TokenKind::Subtract)
+            || self.current_is(TokenKind::Multiply)
+            || self.current_is(TokenKind::Divide)
+            || self.current_is(TokenKind::Exponent)
+            || self.current_is(TokenKind::And)
+            || self.current_is(TokenKind::Or)
+        {
+            Some(self.current_kind.try_into().unwrap())
+        } else {
+            None
+        }
+    }
+
+    fn binary_op_precedence(&self, operator: BinaryOperator) -> (usize, usize) {
+        if operator == BinaryOperator::Add || operator == BinaryOperator::Subtract {
+            (6, 6)
+        } else if operator == BinaryOperator::Multiply || operator == BinaryOperator::Divide {
+            (7, 7)
+        } else if operator == BinaryOperator::Exponent {
+            (10, 9)
+        } else if operator == BinaryOperator::BinaryEquals || operator == BinaryOperator::NEquals {
+            (3, 3)
+        } else if operator == BinaryOperator::Less
+            || operator == BinaryOperator::Greater
+            || operator == BinaryOperator::LessEquals
+            || operator == BinaryOperator::GreaterEquals
+        {
+            (3, 3)
+        } else if operator == BinaryOperator::And {
+            (2, 2)
+        } else if operator == BinaryOperator::Or {
+            (1, 1)
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn parse_simple_expression(&mut self) -> Result<Expression<'a>> {
         match self.current_kind {
             TokenKind::LBrace => {
                 let expression = self.parse_table()?;
@@ -372,6 +470,13 @@ impl<'a> Parser<'a> {
                     span: token.span,
                 }))
             }
+            _ if self.current_binary_operator().is_some() => {
+                let token = self.consume()?;
+                Err(Error::parse(
+                    "missing left hand side of binary operator",
+                    token.span,
+                ))
+            }
             kind => {
                 if kind == TokenKind::True || kind == TokenKind::False {
                     let token = self.consume()?;
@@ -384,6 +489,76 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    fn parse_unary_operator(&mut self) -> Result<Option<Token<'a>>> {
+        if self.current_is(TokenKind::Negate) || self.current_is(TokenKind::Not) {
+            let result = self.consume()?;
+
+            Ok(Some(result))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn parse_expression(&mut self, limit: Option<usize>) -> Result<Expression<'a>> {
+        let start = self.current_token.span;
+        let limit = limit.unwrap_or(0);
+
+        let mut expr: Expression;
+
+        let unary_operator = self.parse_unary_operator()?;
+
+        if let Some(unary_operator) = unary_operator {
+            let rhs = self.parse_expression(None)?;
+            let kind: UnaryOperator = unary_operator.kind.try_into().unwrap();
+
+            expr = Expression::Unary(ExpressionUnary {
+                operator: kind,
+                value: rhs.into(),
+                span: Span {
+                    start: start.start,
+                    end: unary_operator.span.end,
+                    line: start.line,
+                    col: start.col,
+                },
+            });
+        } else {
+            expr = self.parse_simple_expression()?
+        }
+
+        loop {
+            let Some(binop) = self.current_binary_operator() else {
+                break;
+            };
+
+            let (left_precedence, right_precedence) = self.binary_op_precedence(binop);
+            println!("operator: {binop:?}, precedence: {left_precedence},{right_precedence}");
+
+            if left_precedence < limit {
+                println!("precedence over, {binop:?}");
+                break;
+            }
+            let start = self.current_token.span;
+
+            self.consume()?;
+
+            let rhs = self.parse_expression(Some(right_precedence))?;
+
+            expr = Expression::Binary(ExpressionBinary {
+                left: expr.into(),
+                operator: binop,
+                right: rhs.clone().into(),
+                span: Span {
+                    start: start.start,
+                    end: rhs.span().end,
+                    line: start.line,
+                    col: start.col,
+                },
+            })
+        }
+
+        Ok(expr)
     }
 
     fn parse_var_root(&mut self) -> Result<VarRoot<'a>> {
@@ -409,7 +584,7 @@ impl<'a> Parser<'a> {
 
         let root = self.parse_var_root()?;
         self.expect(TokenKind::Equals)?;
-        let value = self.parse_expression()?;
+        let value = self.parse_expression(None)?;
 
         Ok(Statement::Var(LetStatement {
             root,
@@ -428,7 +603,7 @@ impl<'a> Parser<'a> {
 
         let identifier = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
-        let value = self.parse_expression()?;
+        let value = self.parse_expression(None)?;
 
         Ok(Statement::Assign(Assign {
             identifier,
@@ -551,7 +726,7 @@ impl<'a> Parser<'a> {
         let mut body = vec![];
 
         while self.current_kind != TokenKind::Eof {
-            if self.lookahead_is(TokenKind::Equals) {
+            if self.lookahead_is(TokenKind::BinaryEquals) {
                 body.push(self.parse_assign_node()?);
             } else if self.current_is(TokenKind::Let) {
                 body.push(self.parse_var_node()?);

@@ -1,10 +1,36 @@
-use std::fmt::Display;
+use std::fmt::{Binary, Display};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub text: &'a str,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BinaryOperator {
+    // operators
+    BinaryEquals,
+    NEquals,
+    Greater,
+    Less,
+    GreaterEquals,
+    LessEquals,
+    // arithmetic
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Exponent,
+    // ternary
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOperator {
+    Negate,
+    Not,
 }
 
 #[allow(unused)]
@@ -19,6 +45,29 @@ pub enum TokenKind {
     Number,
     Equals,
     Comma,
+
+    // binary
+    // operators
+    BinaryEquals,
+    NEquals,
+    Greater,
+    Less,
+    GreaterEquals,
+    LessEquals,
+    // arithmetic
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Exponent,
+    // ternary
+    And,
+    Or,
+
+    // unary
+    Negate,
+    Not,
+
     // keywords
     True,
     False,
@@ -35,6 +84,43 @@ pub enum TokenKind {
     Error,
 }
 
+impl TryFrom<TokenKind> for UnaryOperator {
+    type Error = &'static str;
+
+    fn try_from(value: TokenKind) -> Result<Self, Self::Error> {
+        if value == TokenKind::Negate {
+            Ok(UnaryOperator::Negate)
+        } else if value == TokenKind::Not {
+            Ok(UnaryOperator::Not)
+        } else {
+            Err("invalid unary operator")
+        }
+    }
+}
+
+impl TryFrom<TokenKind> for BinaryOperator {
+    type Error = &'static str;
+
+    fn try_from(value: TokenKind) -> Result<Self, Self::Error> {
+        match value {
+            TokenKind::BinaryEquals => Ok(BinaryOperator::BinaryEquals),
+            TokenKind::NEquals => Ok(BinaryOperator::NEquals),
+            TokenKind::Greater => Ok(BinaryOperator::Greater),
+            TokenKind::Less => Ok(BinaryOperator::Less),
+            TokenKind::GreaterEquals => Ok(BinaryOperator::GreaterEquals),
+            TokenKind::LessEquals => Ok(BinaryOperator::LessEquals),
+            TokenKind::Add => Ok(BinaryOperator::Add),
+            TokenKind::Subtract => Ok(BinaryOperator::Subtract),
+            TokenKind::Multiply => Ok(BinaryOperator::Multiply),
+            TokenKind::Divide => Ok(BinaryOperator::Divide),
+            TokenKind::Exponent => Ok(BinaryOperator::Exponent),
+            TokenKind::And => Ok(BinaryOperator::And),
+            TokenKind::Or => Ok(BinaryOperator::Or),
+            _ => Err("invalid binary operator"),
+        }
+    }
+}
+
 impl Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
@@ -44,8 +130,25 @@ impl Display for TokenKind {
             TokenKind::Colon => ":",
             TokenKind::Identifier => "identifier",
             TokenKind::Number => "number",
-            TokenKind::Equals => "=",
+            TokenKind::Add => "+",
+            TokenKind::Subtract => "-",
+            TokenKind::Multiply => "*",
+            TokenKind::Divide => "/",
+            TokenKind::Exponent => "^",
             TokenKind::Comma => ",",
+            TokenKind::Equals => "=",
+
+            TokenKind::BinaryEquals => "==",
+            TokenKind::NEquals => "!=",
+            TokenKind::Greater => ">",
+            TokenKind::Less => "<",
+            TokenKind::GreaterEquals => ">=",
+            TokenKind::LessEquals => "<=",
+            TokenKind::And => "and",
+            TokenKind::Or => "or",
+
+            TokenKind::Negate => "-",
+            TokenKind::Not => "!",
 
             TokenKind::True => "true",
             TokenKind::False => "false",
@@ -179,11 +282,28 @@ pub struct SimpleExpression<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExpressionBinary<'a> {
+    pub left: Box<Expression<'a>>,
+    pub operator: BinaryOperator,
+    pub right: Box<Expression<'a>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExpressionUnary<'a> {
+    pub operator: UnaryOperator,
+    pub value: Box<Expression<'a>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression<'a> {
     Boolean(SimpleExpression<'a>),
     Nil(SimpleExpression<'a>),
     Number(SimpleExpression<'a>),
     String(SimpleExpression<'a>),
+    Binary(ExpressionBinary<'a>),
+    Unary(ExpressionUnary<'a>),
     Table(ExpressionTable<'a>),
 }
 

@@ -1,20 +1,20 @@
 mod config;
 mod error;
-mod output;
+// mod output;
 
 use clap::{Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
 use language::{
-    analyze::analyze_routes,
+    // analyze::analyze_routes,
     ast::Parser as RtParser,
-    compiler::{Compiler, VMState},
-    treewalker::{self, execute},
-    vm::VirtualMachine,
+    // compiler::{Compiler, VMState},
+    // treewalker::{self, execute},
+    // vm::VirtualMachine,
 };
 
-use crate::{config::RouteConfig, output::render_output};
+use crate::config::RouteConfig;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -38,22 +38,24 @@ fn run() -> crate::error::Result<()> {
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
 
-            let vm = treewalker::create_state();
-            let result = execute(vm, &ast);
+            println!("{ast:#?}")
 
-            if let Ok(result) = result {
-                let analysis = analyze_routes(&result.routes);
+            // let vm = treewalker::create_state();
+            // let result = execute(vm, &ast);
 
-                if !analysis.issues.is_empty() {
-                    eprintln!("issues: {:#?}", analysis.issues)
-                }
+            // if let Ok(result) = result {
+            //     let analysis = analyze_routes(&result.routes);
 
-                let result = render_output(&project, &analysis.http, &analysis.tcp);
-                println!("{result}")
-            } else if let Err(issues) = result {
-                eprintln!("issues: {:#?}", issues);
-                return Ok(());
-            }
+            //     if !analysis.issues.is_empty() {
+            //         eprintln!("issues: {:#?}", analysis.issues)
+            //     }
+
+            //     let result = render_output(&project, &analysis.http, &analysis.tcp);
+            //     println!("{result}")
+            // } else if let Err(issues) = result {
+            //     eprintln!("issues: {:#?}", issues);
+            //     return Ok(());
+            // }
         }
     }
 
