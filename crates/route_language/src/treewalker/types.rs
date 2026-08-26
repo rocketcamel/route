@@ -8,7 +8,7 @@ pub enum RouteKind {
     TCP,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RawRoute {
     pub kind: RouteKind,
     pub hostname: Option<Rc<str>>,
@@ -18,7 +18,7 @@ pub struct RawRoute {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     String(Rc<str>),
     Number(f64),

@@ -1,12 +1,12 @@
 let gateway = {
-  name = 5 + 2 * 4 - 1
+  name = traefik-gateway
   namespace = kube-system
 }
 
 let entrypoint = websecure
 
 route git.lucalise.ca -> cgit:22 {
-  name = cgit
+  name = cgit + 2
   namespace = git
 }
 

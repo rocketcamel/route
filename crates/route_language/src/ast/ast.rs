@@ -1,4 +1,4 @@
-use std::fmt::{Binary, Display};
+use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Token<'a> {
@@ -169,6 +169,39 @@ impl Display for TokenKind {
     }
 }
 
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            BinaryOperator::BinaryEquals => "compare ==",
+            BinaryOperator::NEquals => "compare !=",
+            BinaryOperator::Greater => "compare >",
+            BinaryOperator::Less => "compare <",
+            BinaryOperator::GreaterEquals => "compare >=",
+            BinaryOperator::LessEquals => "compare <=",
+            BinaryOperator::Add => "+",
+            BinaryOperator::Subtract => "-",
+            BinaryOperator::Multiply => "*",
+            BinaryOperator::Divide => "/",
+            BinaryOperator::Exponent => "^",
+            BinaryOperator::And => "compare &&",
+            BinaryOperator::Or => "compare ||",
+        };
+
+        write!(f, "{text}")
+    }
+}
+
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            UnaryOperator::Negate => "negate",
+            UnaryOperator::Not => "!",
+        };
+
+        write!(f, "{text}")
+    }
+}
+
 impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = self.kind;
@@ -183,7 +216,7 @@ impl<'a> Display for Token<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

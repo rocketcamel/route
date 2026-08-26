@@ -10,7 +10,7 @@ use language::{
     // analyze::analyze_routes,
     ast::Parser as RtParser,
     // compiler::{Compiler, VMState},
-    // treewalker::{self, execute},
+    treewalker::{self, execute},
     // vm::VirtualMachine,
 };
 
@@ -38,10 +38,17 @@ fn run() -> crate::error::Result<()> {
             let mut parser = RtParser::new(&bytes)?;
             let ast = parser.parse()?;
 
-            println!("{ast:#?}")
+            let vm = treewalker::create_state();
+            let result = execute(vm, &ast);
 
-            // let vm = treewalker::create_state();
-            // let result = execute(vm, &ast);
+            match result {
+                Ok(result) => {
+                    println!("{:#?}", result.routes)
+                }
+                Err(issues) => {
+                    eprintln!("issues: {issues:#?}")
+                }
+            }
 
             // if let Ok(result) = result {
             //     let analysis = analyze_routes(&result.routes);

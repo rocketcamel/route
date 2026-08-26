@@ -4,8 +4,9 @@ use std::{collections::HashMap, mem, rc::Rc};
 
 use crate::{
     ast::ast::{
-        Assign, Ast, Block, Expression, LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget,
-        Span, Statement, TableField,
+        Assign, Ast, BinaryOperator, Block, Expression, ExpressionBinary, ExpressionUnary,
+        LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span, Statement, TableField,
+        UnaryOperator,
     },
     treewalker::types::{RawRoute, RouteKind, Value},
 };
@@ -90,12 +91,72 @@ fn write_variable(state: &mut ExecutionState, var: String, new: Value) {
     state.scope.vars.insert(var, new);
 }
 
-fn evaluate_expression(expression: &Expression) -> Value {
+fn evaluate_binary(state: &mut ExecutionState, node: &ExpressionBinary) -> Result<Value, String> {
+    let left = evaluate_expression(state, &node.left);
+    let right = evaluate_expression(state, &node.right);
+
+    match (node.operator, &left, &right) {
+        (BinaryOperator::BinaryEquals, _, _) => Ok(Value::Boolean(left == right)),
+        (BinaryOperator::NEquals, _, _) => Ok(Value::Boolean(left != right)),
+        (BinaryOperator::Greater, Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b)),
+        (BinaryOperator::Less, Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b)),
+        (BinaryOperator::GreaterEquals, Value::Number(a), Value::Number(b)) => {
+            Ok(Value::Boolean(a >= b))
+        }
+        (BinaryOperator::LessEquals, Value::Number(a), Value::Number(b)) => {
+            Ok(Value::Boolean(a <= b))
+        }
+
+        (BinaryOperator::Add, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+        (BinaryOperator::Subtract, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+        (BinaryOperator::Multiply, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+        (BinaryOperator::Divide, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
+        (BinaryOperator::Exponent, Value::Number(a), Value::Number(b)) => {
+            Ok(Value::Number(a.powf(*b)))
+        }
+
+        (op, a, b) => Err(format!("attempt to {op} on {a} and {b}")),
+    }
+}
+
+fn evaluate_unary(state: &mut ExecutionState, node: &ExpressionUnary) -> Result<Value, String> {
+    let value = evaluate_expression(state, &node.value);
+
+    match (node.operator, &value) {
+        (UnaryOperator::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
+        (UnaryOperator::Negate, Value::Number(a)) => Ok(Value::Number(-a)),
+        (op, a) => Err(format!("attempt to {op} on {a}")),
+    }
+}
+
+fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> Value {
     match expression {
         Expression::Boolean(node) => Value::Boolean(node.token.text == "true"),
         Expression::Nil(_) => Value::Nil,
         Expression::Number(node) => Value::Number(node.token.text.parse().unwrap()),
         Expression::String(node) => Value::String(node.token.text.into()),
+        Expression::Unary(node) => {
+            let result = evaluate_unary(state, node);
+
+            match result {
+                Ok(r) => r,
+                Err(e) => {
+                    throw(state, e, node.span);
+                    Value::Nil
+                }
+            }
+        }
+        Expression::Binary(node) => {
+            let result = evaluate_binary(state, node);
+
+            match result {
+                Ok(r) => r,
+                Err(e) => {
+                    throw(state, e, node.span);
+                    Value::Nil
+                }
+            }
+        }
         Expression::Table(node) => {
             let mut table = HashMap::new();
 
@@ -106,9 +167,10 @@ fn evaluate_expression(expression: &Expression) -> Value {
                     TableField::NoKey(_) => {
                         todo!()
                     }
-                    TableField::NameKey(key) => {
-                        table.insert(key.name.text.to_string(), evaluate_expression(&key.value))
-                    }
+                    TableField::NameKey(key) => table.insert(
+                        key.name.text.to_string(),
+                        evaluate_expression(state, &key.value),
+                    ),
                 };
             }
 
@@ -119,7 +181,7 @@ fn evaluate_expression(expression: &Expression) -> Value {
 
 fn visit_stat_assign(state: &mut ExecutionState, assign: &Assign) {
     let key = assign.identifier.text;
-    let value = evaluate_expression(&assign.value);
+    let value = evaluate_expression(state, &assign.value);
 
     write_variable(state, key.to_string(), value);
 }
@@ -154,7 +216,7 @@ fn evaluate_route(state: &mut ExecutionState, block: &Block, span: Span) -> Hash
     for statement in &block.body {
         match statement {
             Statement::Assign(node) => {
-                let value = evaluate_expression(&node.value);
+                let value = evaluate_expression(state, &node.value);
                 properties.insert(node.identifier.text.into(), value);
             }
             stat => {
@@ -235,7 +297,7 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
 
 fn visit_stat_var(state: &mut ExecutionState, var: &LetStatement) {
     let name = var.root.name.text.to_string();
-    let value = evaluate_expression(&var.value);
+    let value = evaluate_expression(state, &var.value);
 
     write_variable(state, name, value);
 }
