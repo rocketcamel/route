@@ -6,7 +6,7 @@ let gateway = {
 let entrypoint = websecure
 
 route git.lucalise.ca -> cgit:22 {
-  name = cgit + 2
+  name = git
   namespace = git
 }
 

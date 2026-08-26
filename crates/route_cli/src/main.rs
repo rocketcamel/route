@@ -1,20 +1,18 @@
 mod config;
 mod error;
-// mod output;
+mod output;
 
 use clap::{Parser, Subcommand};
 use console::style;
 use thiserror_ext::AsReport;
 
 use language::{
-    // analyze::analyze_routes,
+    analyze::analyze_routes,
     ast::Parser as RtParser,
-    // compiler::{Compiler, VMState},
     treewalker::{self, execute},
-    // vm::VirtualMachine,
 };
 
-use crate::config::RouteConfig;
+use crate::{config::RouteConfig, output::render_output};
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -43,26 +41,19 @@ fn run() -> crate::error::Result<()> {
 
             match result {
                 Ok(result) => {
-                    println!("{:#?}", result.routes)
+                    let analysis = analyze_routes(&result.routes);
+
+                    if !analysis.issues.is_empty() {
+                        eprintln!("issues: {:#?}", analysis.issues)
+                    }
+
+                    let output = render_output(&project, &analysis.http, &analysis.tcp);
+                    println!("{output}")
                 }
                 Err(issues) => {
                     eprintln!("issues: {issues:#?}")
                 }
             }
-
-            // if let Ok(result) = result {
-            //     let analysis = analyze_routes(&result.routes);
-
-            //     if !analysis.issues.is_empty() {
-            //         eprintln!("issues: {:#?}", analysis.issues)
-            //     }
-
-            //     let result = render_output(&project, &analysis.http, &analysis.tcp);
-            //     println!("{result}")
-            // } else if let Err(issues) = result {
-            //     eprintln!("issues: {:#?}", issues);
-            //     return Ok(());
-            // }
         }
     }
 

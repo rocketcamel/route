@@ -216,12 +216,12 @@ impl<'a> Display for Token<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Span {
-    pub start: usize,
-    pub end: usize,
-    pub line: usize,
-    pub col: usize,
+    pub x: usize,
+    pub y: usize,
+    pub z: usize,
+    pub w: usize,
 }
 
 #[derive(Debug, Clone)]

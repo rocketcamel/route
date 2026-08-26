@@ -198,20 +198,21 @@ impl<'a> Lexer<'a> {
     fn next_token(&mut self) -> Result<Token<'a>> {
         let mut start = self.pos;
         let mut initial_line = self.line;
-        let initial_col = self.col;
+        let mut initial_col = self.col;
         let mut kind = self.read_kind();
 
         while kind == TokenKind::Whitespace {
             start = self.pos;
             initial_line = self.line;
+            initial_col = self.col;
             kind = self.read_kind();
         }
 
         let span = Span {
-            start: start,
-            end: self.pos,
-            line: initial_line,
-            col: initial_col,
+            x: start,
+            y: self.pos,
+            z: initial_line,
+            w: initial_col,
         };
 
         if kind == TokenKind::Error {
@@ -258,6 +259,27 @@ impl<'a> Expression<'a> {
             Expression::Table(node) => node.span,
         }
     }
+}
+
+impl<'a> TableField<'a> {
+    pub fn span(&self) -> Span {
+        match self {
+            TableField::NameKey(n) => n.span,
+            TableField::NoKey(n) => n.span,
+        }
+    }
+}
+
+fn to_span(spans: &[Option<Span>]) -> Span {
+    let first = spans.iter().flatten().next().copied();
+    let last = spans.iter().flatten().next_back().copied();
+
+    let x = first.map(|v| v.x).unwrap_or(0);
+    let y = last.map(|v| v.y).unwrap_or(0);
+    let z = first.map(|v| v.z).unwrap_or(0);
+    let w = first.map(|v| v.w).unwrap_or(0);
+
+    Span { x, y, z, w }
 }
 
 impl<'a> Parser<'a> {
@@ -315,8 +337,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tablefield_namekey(&mut self) -> Result<TableFieldNameKey<'a>> {
-        let start = self.current_token.span;
-
         let name = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
@@ -325,12 +345,7 @@ impl<'a> Parser<'a> {
             name,
             equals,
             value: value.clone(),
-            span: Span {
-                start: start.start,
-                end: value.span().end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(name.span), Some(equals.span), Some(value.span())]),
         })
     }
 
@@ -351,54 +366,57 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_delimiter<V, F: FnOnce(&mut Self) -> Result<V>>(
+        &mut self,
+        left: TokenKind,
+        right: TokenKind,
+        call: F,
+    ) -> Result<Delimited<'a, V>> {
+        let left = self.expect(left)?;
+        let value = call(self)?;
+        let right = self.expect(right)?;
+
+        Ok(Delimited { left, value, right })
+    }
+
     fn parse_table(&mut self) -> Result<Expression<'a>> {
-        let start = self.current_token.span;
-        let left = self.expect(TokenKind::LBrace)?;
+        let values = self.parse_delimiter(TokenKind::LBrace, TokenKind::RBrace, |parser| {
+            let mut values = Vec::new();
 
-        let mut values = vec![];
-        while !is_delimiter(self.current_kind) {
-            let start = self.current_token.span;
+            while !is_delimiter(parser.current_kind) {
+                let value = parser.parse_tablefield()?;
 
-            let value = self.parse_tablefield()?;
+                let separator = if parser.current_is(TokenKind::Comma) {
+                    Some(parser.expect(TokenKind::Comma)?)
+                } else {
+                    None
+                };
 
-            let separator = if self.current_is(TokenKind::Comma) {
-                Some(self.expect(TokenKind::Comma)?)
-            } else {
-                None
-            };
+                let separator_span = separator.map(|s| s.span);
+                let span = value.span();
 
-            let end = separator.map(|s| s.span.end).unwrap_or(start.end);
+                values.push(Separate {
+                    value,
+                    separator,
+                    span: to_span(&[Some(span), separator_span]),
+                });
+            }
 
-            values.push(Separate {
-                value,
-                separator,
-                span: Span {
-                    start: start.start,
-                    end,
-                    line: start.line,
-                    col: start.col,
-                },
-            });
-        }
+            Ok(values)
+        })?;
 
-        let right = self.expect(TokenKind::RBrace)?;
+        let left_span = values.left.span;
+        let first_span = values.value.first().map(|v| v.span);
+        let last_span = values.value.last().map(|v| v.span);
+        let right_span = values.right.span;
 
         Ok(Expression::Table(ExpressionTable {
-            values: Delimited {
-                left,
-                right,
-                value: values,
-            },
-            span: Span {
-                start: start.start,
-                end: right.span.end,
-                line: start.line,
-                col: start.col,
-            },
+            values,
+            span: to_span(&[Some(left_span), first_span, last_span, Some(right_span)]),
         }))
     }
 
-    fn current_binary_operator(&self) -> Option<BinaryOperator> {
+    fn current_binary_operator(&self) -> Option<Token<'a>> {
         if self.current_is(TokenKind::BinaryEquals)
             || self.current_is(TokenKind::NEquals)
             || self.current_is(TokenKind::Greater)
@@ -413,7 +431,7 @@ impl<'a> Parser<'a> {
             || self.current_is(TokenKind::And)
             || self.current_is(TokenKind::Or)
         {
-            Some(self.current_kind.try_into().unwrap())
+            Some(self.current_token)
         } else {
             None
         }
@@ -502,7 +520,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self, limit: Option<usize>) -> Result<Expression<'a>> {
-        let start = self.current_token.span;
         let limit = limit.unwrap_or(0);
 
         let mut expr: Expression;
@@ -513,15 +530,12 @@ impl<'a> Parser<'a> {
             let rhs = self.parse_expression(None)?;
             let kind: UnaryOperator = unary_operator.kind.try_into().unwrap();
 
+            let rhs_span = rhs.span();
+
             expr = Expression::Unary(ExpressionUnary {
                 operator: kind,
                 value: rhs.into(),
-                span: Span {
-                    start: start.start,
-                    end: unary_operator.span.end,
-                    line: start.line,
-                    col: start.col,
-                },
+                span: to_span(&[Some(unary_operator.span), Some(rhs_span)]),
             });
         } else {
             expr = self.parse_simple_expression()?
@@ -532,29 +546,24 @@ impl<'a> Parser<'a> {
                 break;
             };
 
-            let (left_precedence, right_precedence) = self.binary_op_precedence(binop);
-            println!("operator: {binop:?}, precedence: {left_precedence},{right_precedence}");
+            let kind = binop.kind.try_into().unwrap();
+            let (left_precedence, right_precedence) = self.binary_op_precedence(kind);
 
             if left_precedence < limit {
-                println!("precedence over, {binop:?}");
                 break;
             }
-            let start = self.current_token.span;
 
             self.consume()?;
-
             let rhs = self.parse_expression(Some(right_precedence))?;
+
+            let lhs_span = expr.span();
+            let rhs_span = rhs.span();
 
             expr = Expression::Binary(ExpressionBinary {
                 left: expr.into(),
-                operator: binop,
+                operator: kind,
                 right: rhs.clone().into(),
-                span: Span {
-                    start: start.start,
-                    end: rhs.span().end,
-                    line: start.line,
-                    col: start.col,
-                },
+                span: to_span(&[Some(lhs_span), Some(binop.span), Some(rhs_span)]),
             })
         }
 
@@ -562,67 +571,49 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_var_root(&mut self) -> Result<VarRoot<'a>> {
-        let start = self.current_token.span;
-
         let var = self.expect(TokenKind::Let)?;
         let name = self.expect(TokenKind::Identifier)?;
 
         Ok(VarRoot {
             var,
             name,
-            span: Span {
-                start: start.start,
-                end: name.span.end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(var.span), Some(name.span)]),
         })
     }
 
     fn parse_var_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-
         let root = self.parse_var_root()?;
-        self.expect(TokenKind::Equals)?;
+        let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
+
+        let root_span = root.span;
+        let value_span = value.span();
 
         Ok(Statement::Var(LetStatement {
             root,
             value: value.clone(),
-            span: Span {
-                start: start.start,
-                end: value.span().end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(root_span), Some(equals.span), Some(value_span)]),
         }))
     }
 
     fn parse_assign_node(&mut self) -> Result<Statement<'a>> {
-        let start = self.current_token.span;
-
         let identifier = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
+
+        let value_span = value.span();
 
         Ok(Statement::Assign(Assign {
             identifier,
             equals,
             value: value.clone(),
-            span: Span {
-                start: start.start,
-                end: value.span().end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(identifier.span), Some(equals.span), Some(value_span)]),
         }))
     }
 
     fn parse_service_target(&mut self) -> Result<ServiceTarget<'a>> {
-        let start = self.current_token.span;
-
         let service = self.expect(TokenKind::Identifier)?;
-        self.expect(TokenKind::Colon)?;
+        let equals = self.expect(TokenKind::Colon)?;
         let port_token = self.expect(TokenKind::Number)?;
 
         let port = match port_token.text.parse::<usize>() {
@@ -633,7 +624,7 @@ impl<'a> Parser<'a> {
                         "provided invalid number '{}', only integers are supported",
                         port_token.text
                     ),
-                    start,
+                    service.span,
                 ));
             }
         };
@@ -641,73 +632,62 @@ impl<'a> Parser<'a> {
         Ok(ServiceTarget {
             service,
             port,
-            span: Span {
-                start: start.start,
-                end: port_token.span.end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(service.span), Some(equals.span), Some(port_token.span)]),
         })
     }
 
     fn parse_route_properties(&mut self) -> Result<Block<'a>> {
-        let start = self.expect(TokenKind::LBrace)?.span;
+        let left = self.expect(TokenKind::LBrace)?;
+
         let mut body = vec![];
 
         while !self.current_is(TokenKind::RBrace) && !self.current_is(TokenKind::Eof) {
             body.push(self.parse_assign_node()?);
         }
 
-        let end = self.expect(TokenKind::RBrace)?.span.end;
+        let right = self.expect(TokenKind::RBrace)?;
 
         Ok(Block {
             body,
-            span: Span {
-                start: start.start,
-                end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(left.span), Some(right.span)]),
         })
     }
 
     fn parse_route_tcp(&mut self) -> Result<RouteTCP<'a>> {
-        let start = self.current_token.span;
-        self.expect(TokenKind::Tcp)?;
+        let start = self.expect(TokenKind::Tcp)?;
 
         let target = self.parse_service_target()?;
         let properties = self.parse_route_properties()?;
+
+        let target_span = target.span;
+        let properties_span = properties.span;
 
         Ok(RouteTCP {
             target,
             properties: properties.clone(),
-            span: Span {
-                start: start.start,
-                end: properties.span.end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[Some(start.span), Some(target_span), Some(properties_span)]),
         })
     }
 
     fn parse_route_http(&mut self) -> Result<RouteHTTP<'a>> {
-        let start = self.current_token.span;
-
         let hostname = self.expect(TokenKind::Identifier)?;
-        self.expect(TokenKind::Arrow)?;
+        let equals = self.expect(TokenKind::Arrow)?;
         let target = self.parse_service_target()?;
         let properties = self.parse_route_properties()?;
+
+        let target_span = target.span;
+        let properties_span = properties.span;
 
         Ok(RouteHTTP {
             hostname,
             target,
             properties: properties.clone(),
-            span: Span {
-                start: start.start,
-                end: properties.span.end,
-                line: start.line,
-                col: start.col,
-            },
+            span: to_span(&[
+                Some(hostname.span),
+                Some(equals.span),
+                Some(target_span),
+                Some(properties_span),
+            ]),
         })
     }
 
@@ -723,6 +703,7 @@ impl<'a> Parser<'a> {
 
     fn parse_block_node(&mut self) -> Result<Block<'a>> {
         let start = self.current_token.span;
+
         let mut body = vec![];
 
         while self.current_kind != TokenKind::Eof {
@@ -740,10 +721,10 @@ impl<'a> Parser<'a> {
         Ok(Block {
             body,
             span: Span {
-                start: start.start,
-                end: self.current_token.span.end,
-                line: start.line,
-                col: start.col,
+                x: start.x,
+                y: self.current_token.span.y,
+                z: start.z,
+                w: start.w,
             },
         })
     }

@@ -10,6 +10,6 @@ use crate::ast::ast::Span;
 
 impl Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.line, self.col)
+        write!(f, "{}:{}", self.z, self.w)
     }
 }
