@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, rc::Rc};
 
-use crate::ast::ast::Span;
+use crate::ast::ast::{Ast, Span, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RouteKind {
@@ -16,6 +16,18 @@ pub struct RawRoute {
     pub port: usize,
     pub properties: HashMap<String, Value>,
     pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct Source {
+    pub source: Vec<u8>,
+    pub ast: Ast,
+}
+
+impl Source {
+    pub fn text(&self, token: Token) -> &str {
+        str::from_utf8(&self.source[token.span.x..token.span.y]).unwrap()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

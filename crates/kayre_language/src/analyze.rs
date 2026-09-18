@@ -67,7 +67,7 @@ fn expect_or<'a>(route: &'a RawRoute, name: &str, default: &'a Value) -> &'a Val
 }
 
 fn expect_boolean<'a>(route: &'a RawRoute, name: &str) -> Option<bool> {
-    let value = expect_or(route, name, &Value::Boolean(false));
+    let value = expect_or(route, name, &Value::Boolean(true));
 
     if let Value::Boolean(bool) = value {
         Some(*bool)
@@ -166,22 +166,20 @@ fn analyze_gateway(state: &mut Analysis, route: &RawRoute) -> Option<Gateway> {
 }
 
 fn analyze_name(state: &mut Analysis, route: &RawRoute, hostname: &str) -> Option<Rc<str>> {
-    let value = expect_string(state, route, "name");
+    if route.properties.contains_key("name") {
+        let result = expect_string(state, route, "name")?;
+        Some(result)
+    } else {
+        let name: Option<Rc<str>> = hostname.split(".").next().map(|n| n.into());
 
-    match value {
-        Some(name) => Some(name),
-        None => {
-            let name: Option<Rc<str>> = hostname.split(".").next().map(|n| n.into());
-
-            if name.is_none() {
-                state.issues.push(Issue {
-                    why: format!("missing required property 'name', unable to parse hostname to grab it automatically"),
-                    span: route.span
-                });
-            }
-
-            return name;
+        if name.is_none() {
+            state.issues.push(Issue {
+                why: format!("missing required property 'name', unable to parse hostname to grab it automatically"),
+                span: route.span
+            });
         }
+
+        return name;
     }
 }
 

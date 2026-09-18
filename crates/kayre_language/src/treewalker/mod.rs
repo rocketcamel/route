@@ -8,7 +8,7 @@ use crate::{
         LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span, Statement, TableField,
         UnaryOperator,
     },
-    treewalker::types::{RawRoute, RouteKind, Value},
+    treewalker::types::{RawRoute, RouteKind, Source, Value},
 };
 
 #[allow(unused)]
@@ -26,7 +26,8 @@ pub struct Issue {
 }
 
 #[derive(Debug)]
-pub struct ExecutionState {
+pub struct ExecutionState<'a> {
+    pub source: &'a Source,
     pub globals: HashMap<String, String>,
     pub scope: Scope,
     pub issues: Vec<Issue>,
@@ -37,7 +38,7 @@ pub struct ExecutionResult {
     pub routes: Vec<RawRoute>,
 }
 
-impl<'a> Route<'a> {
+impl Route {
     pub fn span(&self) -> Span {
         match self {
             Route::HTTP(r) => r.span,
@@ -46,7 +47,7 @@ impl<'a> Route<'a> {
     }
 }
 
-impl<'a> Statement<'a> {
+impl Statement {
     pub fn span(&self) -> Span {
         match self {
             Statement::Assign(n) => n.span,
@@ -131,10 +132,10 @@ fn evaluate_unary(state: &mut ExecutionState, node: &ExpressionUnary) -> Result<
 
 fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> Value {
     match expression {
-        Expression::Boolean(node) => Value::Boolean(node.token.text == "true"),
+        Expression::Boolean(node) => Value::Boolean(state.source.text(node.token) == "true"),
         Expression::Nil(_) => Value::Nil,
-        Expression::Number(node) => Value::Number(node.token.text.parse().unwrap()),
-        Expression::String(node) => Value::String(node.token.text.into()),
+        Expression::Number(node) => Value::Number(state.source.text(node.token).parse().unwrap()),
+        Expression::String(node) => Value::String(state.source.text(node.token).into()),
         Expression::Unary(node) => {
             let result = evaluate_unary(state, node);
 
@@ -168,7 +169,7 @@ fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> V
                         todo!()
                     }
                     TableField::NameKey(key) => table.insert(
-                        key.name.text.to_string(),
+                        state.source.text(key.name).to_string(),
                         evaluate_expression(state, &key.value),
                     ),
                 };
@@ -180,14 +181,14 @@ fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> V
 }
 
 fn visit_stat_assign(state: &mut ExecutionState, assign: &Assign) {
-    let key = assign.identifier.text;
+    let key = state.source.text(assign.identifier);
     let value = evaluate_expression(state, &assign.value);
 
     write_variable(state, key.to_string(), value);
 }
 
-fn visit_service_target(target: &ServiceTarget) -> (Rc<str>, usize) {
-    let service = target.service.text.into();
+fn visit_service_target(state: &ExecutionState, target: &ServiceTarget) -> (Rc<str>, usize) {
+    let service = state.source.text(target.service).into();
     let port = target.port;
 
     (service, port)
@@ -217,7 +218,7 @@ fn evaluate_route(state: &mut ExecutionState, block: &Block, span: Span) -> Hash
         match statement {
             Statement::Assign(node) => {
                 let value = evaluate_expression(state, &node.value);
-                properties.insert(node.identifier.text.into(), value);
+                properties.insert(state.source.text(node.identifier).into(), value);
             }
             stat => {
                 throw(state, "expected assignment", stat.span());
@@ -239,7 +240,7 @@ fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
     );
     state.scope.up = Some(Box::new(parent));
 
-    let (service_target, port) = visit_service_target(&route.target);
+    let (service_target, port) = visit_service_target(state, &route.target);
     let properties = evaluate_route(state, &route.properties, route.span);
 
     let route = RawRoute {
@@ -269,12 +270,12 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
     );
     state.scope.up = Some(Box::new(parent));
 
-    let (service_target, port) = visit_service_target(&route.target);
+    let (service_target, port) = visit_service_target(state, &route.target);
     let properties = evaluate_route(state, &route.properties, route.span);
 
     let route = RawRoute {
         kind: RouteKind::HTTP,
-        hostname: Some(route.hostname.text.into()),
+        hostname: Some(state.source.text(route.hostname).into()),
         service_target,
         port,
         span: route.span,
@@ -296,7 +297,7 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
 }
 
 fn visit_stat_var(state: &mut ExecutionState, var: &LetStatement) {
-    let name = var.root.name.text.to_string();
+    let name = state.source.text(var.root.name).to_string();
     let value = evaluate_expression(state, &var.value);
 
     write_variable(state, name, value);
@@ -328,8 +329,9 @@ fn visit_block(state: &mut ExecutionState, block: &Block, inherit: bool) {
     }
 }
 
-pub fn create_state() -> ExecutionState {
+pub fn create_state<'a>(source: &'a Source) -> ExecutionState<'a> {
     ExecutionState {
+        source,
         globals: HashMap::new(),
         scope: Scope {
             up: None,

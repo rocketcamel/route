@@ -8,14 +8,15 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 pub struct RouteConfig {
-    pub routes: Routes,
     pub input: Input,
     pub output: Output,
+    pub middleware: Middleware,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Routes {
-    pub private_middleware_name: String,
+pub struct Middleware {
+    pub name: String,
+    pub namespace: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -32,7 +33,7 @@ pub fn config_path() -> Result<PathBuf, errors::ConfigError> {
     let mut cwd = current_dir()?;
 
     loop {
-        let candidate = cwd.join("route.toml");
+        let candidate = cwd.join("kayre.toml");
 
         if candidate.exists() {
             return Ok(candidate);

@@ -97,7 +97,7 @@ pub struct ParentRef<'a> {
 
 pub fn render_output(config: &RouteConfig, http: &[HTTPRoute], tcp: &[TCPRoute]) -> String {
     let mut output = String::new();
-    let private_middleware_name = &config.routes.private_middleware_name;
+    let private_middleware = &config.middleware;
 
     for route in http {
         if !output.is_empty() {
@@ -112,7 +112,7 @@ pub fn render_output(config: &RouteConfig, http: &[HTTPRoute], tcp: &[TCPRoute])
                 extension_ref: ExtensionRef {
                     group: "traefik.io",
                     kind: "Middleware",
-                    name: private_middleware_name,
+                    name: &private_middleware.name,
                 },
             });
         }
@@ -151,8 +151,8 @@ pub fn render_output(config: &RouteConfig, http: &[HTTPRoute], tcp: &[TCPRoute])
 
         if route.private {
             middlewares.push(TCPRouteMiddleware {
-                name: private_middleware_name,
-                namespace: "kube-system",
+                name: &private_middleware.name,
+                namespace: &private_middleware.namespace,
             });
         }
 

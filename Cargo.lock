@@ -163,6 +163,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "kayre"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "console",
+ "kayre_language",
+ "serde",
+ "serde_yaml",
+ "thiserror",
+ "thiserror-ext",
+ "toml",
+]
+
+[[package]]
+name = "kayre_language"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "thiserror-ext",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -190,28 +212,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "route_cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "console",
- "route_language",
- "serde",
- "serde_yaml",
- "thiserror",
- "thiserror-ext",
- "toml",
-]
-
-[[package]]
-name = "route_language"
-version = "0.1.0"
-dependencies = [
- "thiserror",
- "thiserror-ext",
 ]
 
 [[package]]

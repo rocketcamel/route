@@ -1,0 +1,6 @@
+input.module_path = "./main.kr"
+output.path = "./out/routes.yaml"
+
+[middleware]
+name = "private-networks"
+namespace = "kube-system"

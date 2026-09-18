@@ -2,11 +2,11 @@ use crate::ast::ast::{Assign, Ast, Block, Expression, LetStatement, Route, State
 
 #[allow(unused)]
 pub trait Visitor<'a> {
-    fn visit_ast(&mut self, ast: &Ast<'a>) {
+    fn visit_ast(&mut self, ast: &Ast) {
         self.visit_block(&ast.block);
     }
 
-    fn visit_block(&mut self, block: &Block<'a>) {
+    fn visit_block(&mut self, block: &Block) {
         for statement in &block.body {
             self.visit_statement(statement);
         }

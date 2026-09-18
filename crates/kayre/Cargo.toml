@@ -1,5 +1,5 @@
 [package]
-name = "route_cli"
+name = "kayre"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,4 +11,4 @@ toml = { workspace = true }
 serde_yaml = { workspace = true }
 console = { workspace = true }
 clap = { version = "4.6.1", features = ["derive"] }
-language = { package = "route_language", path = "../route_language" }
+language = { package = "kayre_language", path = "../kayre_language" }

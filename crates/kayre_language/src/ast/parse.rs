@@ -18,9 +18,9 @@ pub struct Lexer<'a> {
 
 pub struct Parser<'a> {
     pub lexer: Lexer<'a>,
-    pub current_token: Token<'a>,
+    pub current_token: Token,
     pub current_kind: TokenKind,
-    pub lookahead_token: Token<'a>,
+    pub lookahead_token: Token,
     pub lookahead_kind: TokenKind,
 }
 
@@ -65,6 +65,20 @@ impl<'a> Lexer<'a> {
     fn bump_peek(&mut self) -> u8 {
         self.bump();
         return self.peek();
+    }
+
+    fn get(&self, start: usize, end: usize) -> &str {
+        str::from_utf8(&self.input[start..end]).unwrap()
+    }
+
+    fn display(&self, token: Token) -> String {
+        let kind = token.kind;
+
+        match kind {
+            TokenKind::Identifier => self.get(token.span.x, token.span.y).to_string(),
+            TokenKind::Error => format!("error {}", self.get(token.span.x, token.span.y)),
+            _ => format!("\"{kind:?}\""),
+        }
     }
 
     fn read_kind(&mut self) -> TokenKind {
@@ -171,7 +185,9 @@ impl<'a> Lexer<'a> {
                         break;
                     }
                 }
-                let value = str::from_utf8(&self.input[start..self.pos]).unwrap();
+
+                let value = self.get(start, self.pos);
+
                 match value {
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
@@ -195,7 +211,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<Token<'a>> {
+    fn next_token(&mut self) -> Result<Token> {
         let mut start = self.pos;
         let mut initial_line = self.line;
         let mut initial_col = self.col;
@@ -222,21 +238,8 @@ impl<'a> Lexer<'a> {
                 span,
             ));
         }
-        let text = str::from_utf8(&self.input[start..self.pos]).unwrap();
 
-        Ok(Token { kind, text, span })
-    }
-}
-
-fn display<'a>(token: Token<'a>) -> String {
-    let kind = token.kind;
-
-    if kind == TokenKind::Identifier {
-        token.text.to_string()
-    } else if kind == TokenKind::Error {
-        format!("error {}", token.text)
-    } else {
-        format!("{kind:?}")
+        Ok(Token { kind, span })
     }
 }
 
@@ -247,7 +250,7 @@ fn is_delimiter(kind: TokenKind) -> bool {
         || kind == TokenKind::Eof;
 }
 
-impl<'a> Expression<'a> {
+impl Expression {
     pub fn span(&self) -> Span {
         match self {
             Expression::Boolean(node)
@@ -261,7 +264,7 @@ impl<'a> Expression<'a> {
     }
 }
 
-impl<'a> TableField<'a> {
+impl TableField {
     pub fn span(&self) -> Span {
         match self {
             TableField::NameKey(n) => n.span,
@@ -299,7 +302,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub fn parse(&mut self) -> Result<Ast<'a>> {
+    pub fn parse(&mut self) -> Result<Ast> {
         Ok(Ast {
             block: self.parse_block_node()?,
         })
@@ -313,7 +316,7 @@ impl<'a> Parser<'a> {
         return self.lookahead_kind == kind;
     }
 
-    fn consume(&mut self) -> Result<Token<'a>> {
+    fn consume(&mut self) -> Result<Token> {
         let old_token = self.current_token;
         self.current_token = self.lookahead_token;
         self.current_kind = self.lookahead_kind;
@@ -324,19 +327,23 @@ impl<'a> Parser<'a> {
 
     fn expected_but(&self, kind: &str) -> Error {
         Error::parse(
-            format!("expected {}, but got {}", kind, display(self.current_token)),
+            format!(
+                "expected {}, but got {}",
+                kind,
+                self.lexer.display(self.current_token)
+            ),
             self.current_token.span,
         )
     }
 
-    fn expect(&mut self, kind: TokenKind) -> Result<Token<'a>> {
+    fn expect(&mut self, kind: TokenKind) -> Result<Token> {
         if !self.current_is(kind) {
-            return Err(self.expected_but(&format!("{kind:?}")));
+            return Err(self.expected_but(&format!("{kind}")));
         }
         return self.consume();
     }
 
-    fn parse_tablefield_namekey(&mut self) -> Result<TableFieldNameKey<'a>> {
+    fn parse_tablefield_namekey(&mut self) -> Result<TableFieldNameKey> {
         let name = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
@@ -349,7 +356,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_tablefield_nokey(&mut self) -> Result<TableFieldNoKey<'a>> {
+    fn parse_tablefield_nokey(&mut self) -> Result<TableFieldNoKey> {
         let value = self.parse_expression(None)?;
 
         Ok(TableFieldNoKey {
@@ -358,7 +365,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_tablefield(&mut self) -> Result<TableField<'a>> {
+    fn parse_tablefield(&mut self) -> Result<TableField> {
         if self.current_is(TokenKind::Identifier) && self.lookahead_is(TokenKind::Equals) {
             Ok(TableField::NameKey(self.parse_tablefield_namekey()?))
         } else {
@@ -371,7 +378,7 @@ impl<'a> Parser<'a> {
         left: TokenKind,
         right: TokenKind,
         call: F,
-    ) -> Result<Delimited<'a, V>> {
+    ) -> Result<Delimited<V>> {
         let left = self.expect(left)?;
         let value = call(self)?;
         let right = self.expect(right)?;
@@ -379,7 +386,7 @@ impl<'a> Parser<'a> {
         Ok(Delimited { left, value, right })
     }
 
-    fn parse_table(&mut self) -> Result<Expression<'a>> {
+    fn parse_table(&mut self) -> Result<Expression> {
         let values = self.parse_delimiter(TokenKind::LBrace, TokenKind::RBrace, |parser| {
             let mut values = Vec::new();
 
@@ -416,7 +423,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn current_binary_operator(&self) -> Option<Token<'a>> {
+    fn current_binary_operator(&self) -> Option<Token> {
         if self.current_is(TokenKind::BinaryEquals)
             || self.current_is(TokenKind::NEquals)
             || self.current_is(TokenKind::Greater)
@@ -461,7 +468,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_simple_expression(&mut self) -> Result<Expression<'a>> {
+    fn parse_simple_expression(&mut self) -> Result<Expression> {
         match self.current_kind {
             TokenKind::LBrace => {
                 let expression = self.parse_table()?;
@@ -509,7 +516,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_unary_operator(&mut self) -> Result<Option<Token<'a>>> {
+    fn parse_unary_operator(&mut self) -> Result<Option<Token>> {
         if self.current_is(TokenKind::Negate) || self.current_is(TokenKind::Not) {
             let result = self.consume()?;
 
@@ -519,11 +526,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expression(&mut self, limit: Option<usize>) -> Result<Expression<'a>> {
+    fn parse_expression(&mut self, limit: Option<usize>) -> Result<Expression> {
         let limit = limit.unwrap_or(0);
 
         let mut expr: Expression;
-
         let unary_operator = self.parse_unary_operator()?;
 
         if let Some(unary_operator) = unary_operator {
@@ -570,7 +576,7 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn parse_var_root(&mut self) -> Result<VarRoot<'a>> {
+    fn parse_var_root(&mut self) -> Result<VarRoot> {
         let var = self.expect(TokenKind::Let)?;
         let name = self.expect(TokenKind::Identifier)?;
 
@@ -581,7 +587,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_var_node(&mut self) -> Result<Statement<'a>> {
+    fn parse_var_node(&mut self) -> Result<Statement> {
         let root = self.parse_var_root()?;
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
@@ -596,7 +602,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_assign_node(&mut self) -> Result<Statement<'a>> {
+    fn parse_assign_node(&mut self) -> Result<Statement> {
         let identifier = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
@@ -611,18 +617,19 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_service_target(&mut self) -> Result<ServiceTarget<'a>> {
+    fn parse_service_target(&mut self) -> Result<ServiceTarget> {
         let service = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Colon)?;
         let port_token = self.expect(TokenKind::Number)?;
+        let value = self.lexer.get(port_token.span.x, port_token.span.y);
 
-        let port = match port_token.text.parse::<usize>() {
+        let port = match value.parse::<usize>() {
             Ok(port) => port,
             Err(_) => {
                 return Err(Error::parse(
                     format!(
                         "provided invalid number '{}', only integers are supported",
-                        port_token.text
+                        value
                     ),
                     service.span,
                 ));
@@ -636,7 +643,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_route_properties(&mut self) -> Result<Block<'a>> {
+    fn parse_route_properties(&mut self) -> Result<Block> {
         let left = self.expect(TokenKind::LBrace)?;
 
         let mut body = vec![];
@@ -653,7 +660,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_route_tcp(&mut self) -> Result<RouteTCP<'a>> {
+    fn parse_route_tcp(&mut self) -> Result<RouteTCP> {
         let start = self.expect(TokenKind::Tcp)?;
 
         let target = self.parse_service_target()?;
@@ -669,7 +676,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_route_http(&mut self) -> Result<RouteHTTP<'a>> {
+    fn parse_route_http(&mut self) -> Result<RouteHTTP> {
         let hostname = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Arrow)?;
         let target = self.parse_service_target()?;
@@ -691,7 +698,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_route(&mut self) -> Result<Statement<'a>> {
+    fn parse_route(&mut self) -> Result<Statement> {
         self.expect(TokenKind::Route)?;
 
         if self.current_is(TokenKind::Tcp) {
@@ -701,13 +708,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block_node(&mut self) -> Result<Block<'a>> {
+    fn parse_block_node(&mut self) -> Result<Block> {
         let start = self.current_token.span;
 
         let mut body = vec![];
 
         while self.current_kind != TokenKind::Eof {
-            if self.lookahead_is(TokenKind::BinaryEquals) {
+            if self.lookahead_is(TokenKind::Equals) {
                 body.push(self.parse_assign_node()?);
             } else if self.current_is(TokenKind::Let) {
                 body.push(self.parse_var_node()?);
