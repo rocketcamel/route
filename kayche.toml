@@ -1,4 +1,4 @@
-input.module_path = "./main.kr"
+input.module_path = "./main.kc"
 output.path = "./out/routes.yaml"
 
 [middleware]

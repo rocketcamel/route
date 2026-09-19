@@ -1,8 +1,9 @@
 use std::fmt::Display;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
+    pub text: String,
     pub span: Span,
 }
 
@@ -39,11 +40,15 @@ pub enum TokenKind {
     Arrow,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Colon,
     Identifier,
+    String,
     Number,
     Equals,
     Comma,
+    Period,
 
     // binary
     // operators
@@ -126,8 +131,11 @@ impl Display for TokenKind {
             TokenKind::Arrow => "->",
             TokenKind::LBrace => "{",
             TokenKind::RBrace => "}",
+            TokenKind::LBracket => "[",
+            TokenKind::RBracket => "]",
             TokenKind::Colon => ":",
             TokenKind::Identifier => "identifier",
+            TokenKind::String => "string",
             TokenKind::Number => "number",
             TokenKind::Add => "+",
             TokenKind::Subtract => "-",
@@ -135,6 +143,7 @@ impl Display for TokenKind {
             TokenKind::Divide => "/",
             TokenKind::Exponent => "^",
             TokenKind::Comma => ",",
+            TokenKind::Period => ".",
             TokenKind::Equals => "=",
 
             TokenKind::BinaryEquals => "==",
@@ -201,19 +210,36 @@ impl Display for UnaryOperator {
     }
 }
 
-// impl Display for Token {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let kind = self.kind;
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = self.kind;
 
-//         if kind == TokenKind::Identifier {
-//             write!(f, "{}", self.text)
-//         } else if kind == TokenKind::Error {
-//             write!(f, "error {}", self.text)
-//         } else {
-//             write!(f, "{kind}")
-//         }
-//     }
-// }
+        if kind == TokenKind::Identifier {
+            write!(f, "{}", self.text)
+        } else if kind == TokenKind::Error {
+            write!(f, "error {}", self.text)
+        } else {
+            write!(f, "\"{kind}\"")
+        }
+    }
+}
+
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Expression::Boolean(_) => "boolean",
+            Expression::Nil(_) => "nil",
+            Expression::Number(_) => "number",
+            Expression::String(_) => "string",
+            Expression::Binary(_) => "binary expression",
+            Expression::Unary(_) => "unary expression",
+            Expression::Table(_) => "table",
+            Expression::Var(_) => "var",
+        };
+
+        write!(f, "{text}")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Span {
@@ -242,6 +268,7 @@ pub struct Separate<T> {
 #[derive(Debug, Clone)]
 pub struct ServiceTarget {
     pub service: Token,
+    pub equals: Token,
     pub port: usize,
     pub span: Span,
 }
@@ -269,8 +296,34 @@ pub enum Route {
 
 #[derive(Debug, Clone)]
 pub struct VarRoot {
-    pub var: Token,
     pub name: Token,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct VarSuffixNameIndex {
+    pub period: Token,
+    pub name: Token,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct VarSuffixExpressionIndex {
+    pub period: Token,
+    pub node: Delimited<Expression>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum VarSuffix {
+    NameIndex(VarSuffixNameIndex),
+    ExpressionIndex(VarSuffixExpressionIndex),
+}
+
+#[derive(Debug, Clone)]
+pub struct Var {
+    pub root: VarRoot,
+    pub suffixes: Vec<VarSuffix>,
     pub span: Span,
 }
 
@@ -303,6 +356,7 @@ pub struct ExpressionTable {
 #[derive(Debug, Clone)]
 pub struct LetStatement {
     pub root: VarRoot,
+    pub equals: Token,
     pub value: Expression,
     pub span: Span,
 }
@@ -316,14 +370,14 @@ pub struct SimpleExpression {
 #[derive(Debug, Clone)]
 pub struct ExpressionBinary {
     pub left: Box<Expression>,
-    pub operator: BinaryOperator,
+    pub operator: Token,
     pub right: Box<Expression>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct ExpressionUnary {
-    pub operator: UnaryOperator,
+    pub operator: Token,
     pub value: Box<Expression>,
     pub span: Span,
 }
@@ -337,6 +391,7 @@ pub enum Expression {
     Binary(ExpressionBinary),
     Unary(ExpressionUnary),
     Table(ExpressionTable),
+    Var(Var),
 }
 
 #[derive(Debug, Clone)]
@@ -350,7 +405,7 @@ pub struct Assign {
 #[derive(Debug, Clone)]
 pub enum Statement {
     Assign(Assign),
-    Var(LetStatement),
+    Let(LetStatement),
     Route(Route),
 }
 

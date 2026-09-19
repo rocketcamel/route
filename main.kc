@@ -1,0 +1,51 @@
+let gateway = {
+  name = "traefik-gateway"
+  namespace = "kube-system"
+}
+
+let entrypoint = "websecure"
+
+let test_thing = {
+    value = "git"
+}
+
+route "git.lucalise.ca" -> cgit:22 {
+  namespace = test_thing.value
+  private = false
+}
+
+route tcp gitolite:22 {
+  name = "gitolite"
+  namespace = "git"
+  entrypoint = "ssh"
+}
+
+route "gitlab.lucalise.ca" -> gitlab-webservice-default:8181 {
+    namespace = "gitlab"
+    private = false
+}
+
+route "home-assistant.lucalise.ca" -> home-assistant:8080 {
+    namespace = "home"
+}
+
+route "sonarr.lucalise.ca" -> sonarr:8989 {
+    namespace = "media"
+}
+
+route "bazarr.lucalise.ca" -> bazarr:6767 {
+    namespace = "media"
+}
+
+route "radarr.lucalise.ca" -> radarr:7878 {
+    namespace = "media"
+}
+
+route "qbittorrent.lucalise.ca" -> qbittorrent:8080 {
+    namespace = "media"
+}
+
+route "vault.lucalise.ca" -> vaultwarden:80 {
+    name = "vaultwarden"
+    namespace = "security"
+}

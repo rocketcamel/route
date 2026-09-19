@@ -33,7 +33,7 @@ pub fn config_path() -> Result<PathBuf, errors::ConfigError> {
     let mut cwd = current_dir()?;
 
     loop {
-        let candidate = cwd.join("kayre.toml");
+        let candidate = cwd.join("kayche.toml");
 
         if candidate.exists() {
             return Ok(candidate);
@@ -75,7 +75,7 @@ pub mod errors {
     pub enum ConfigErrorKind {
         #[error("io error")]
         Io(#[from] std::io::Error),
-        #[error("unable to find route.toml config file")]
+        #[error("unable to find kayche.toml config file")]
         NoConfig,
 
         #[error("error deserializing configuration file")]

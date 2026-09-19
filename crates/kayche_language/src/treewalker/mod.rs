@@ -1,14 +1,15 @@
 pub mod types;
 
-use std::{collections::HashMap, mem, rc::Rc};
+use std::{collections::HashMap, fmt::Display, mem, rc::Rc};
 
 use crate::{
     ast::ast::{
         Assign, Ast, BinaryOperator, Block, Expression, ExpressionBinary, ExpressionUnary,
         LetStatement, Route, RouteHTTP, RouteTCP, ServiceTarget, Span, Statement, TableField,
-        UnaryOperator,
+        Token, UnaryOperator, Var,
+        VarSuffix::{ExpressionIndex, NameIndex},
     },
-    treewalker::types::{RawRoute, RouteKind, Source, Value},
+    treewalker::types::{RawRoute, RouteKind, Value},
 };
 
 #[allow(unused)]
@@ -26,8 +27,7 @@ pub struct Issue {
 }
 
 #[derive(Debug)]
-pub struct ExecutionState<'a> {
-    pub source: &'a Source,
+pub struct ExecutionState {
     pub globals: HashMap<String, String>,
     pub scope: Scope,
     pub issues: Vec<Issue>,
@@ -51,11 +51,22 @@ impl Statement {
     pub fn span(&self) -> Span {
         match self {
             Statement::Assign(n) => n.span,
-            Statement::Var(n) => n.span,
+            Statement::Let(n) => n.span,
             Statement::Route(n) => n.span(),
         }
     }
 }
+
+macro_rules! evaluate_throw {
+    ($state:expr, $evaluation:expr) => {
+        match $evaluation {
+            Ok(value) => value,
+            Err(issue) => return throw_issue($state, issue),
+        }
+    };
+}
+
+type Evaluation<T> = Result<T, Issue>;
 
 fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
     state.issues.push(Issue {
@@ -64,11 +75,18 @@ fn throw<T: Into<String>>(state: &mut ExecutionState, why: T, span: Span) {
     });
 }
 
-fn read_variable<'a>(state: &'a ExecutionState, var: &str) -> (Option<&'a Scope>, Option<Value>) {
+fn throw_issue(state: &mut ExecutionState, issue: Issue) {
+    state.issues.push(issue);
+}
+
+fn read_variable<'a>(
+    state: &'a ExecutionState,
+    var: &str,
+) -> (Option<&'a Scope>, Option<&'a Value>) {
     let mut active = Some(&state.scope);
 
     while let Some(scope) = active {
-        let value = scope.vars.get(var).cloned();
+        let value = scope.vars.get(var);
         if let Some(value) = value {
             return (active, Some(value));
         }
@@ -92,11 +110,11 @@ fn write_variable(state: &mut ExecutionState, var: String, new: Value) {
     state.scope.vars.insert(var, new);
 }
 
-fn evaluate_binary(state: &mut ExecutionState, node: &ExpressionBinary) -> Result<Value, String> {
-    let left = evaluate_expression(state, &node.left);
-    let right = evaluate_expression(state, &node.right);
+fn evaluate_binary(state: &mut ExecutionState, node: &ExpressionBinary) -> Evaluation<Value> {
+    let left = evaluate_expression(state, &node.left)?;
+    let right = evaluate_expression(state, &node.right)?;
 
-    match (node.operator, &left, &right) {
+    match (node.operator.kind.try_into().unwrap(), &left, &right) {
         (BinaryOperator::BinaryEquals, _, _) => Ok(Value::Boolean(left == right)),
         (BinaryOperator::NEquals, _, _) => Ok(Value::Boolean(left != right)),
         (BinaryOperator::Greater, Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b)),
@@ -116,48 +134,91 @@ fn evaluate_binary(state: &mut ExecutionState, node: &ExpressionBinary) -> Resul
             Ok(Value::Number(a.powf(*b)))
         }
 
-        (op, a, b) => Err(format!("attempt to {op} on {a} and {b}")),
+        (op, a, b) => Err(Issue {
+            why: format!("attempt to {op} on {a} and {b}"),
+            span: node.span,
+        }),
     }
 }
 
-fn evaluate_unary(state: &mut ExecutionState, node: &ExpressionUnary) -> Result<Value, String> {
-    let value = evaluate_expression(state, &node.value);
+fn evaluate_unary(state: &mut ExecutionState, node: &ExpressionUnary) -> Evaluation<Value> {
+    let value = evaluate_expression(state, &node.value)?;
 
-    match (node.operator, &value) {
+    match (node.operator.kind.try_into().unwrap(), &value) {
         (UnaryOperator::Not, Value::Boolean(b)) => Ok(Value::Boolean(!b)),
         (UnaryOperator::Negate, Value::Number(a)) => Ok(Value::Number(-a)),
-        (op, a) => Err(format!("attempt to {op} on {a}")),
+        (op, a) => Err(Issue {
+            why: format!("attempt to {op} on {a}"),
+            span: node.span,
+        }),
     }
 }
 
-fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> Value {
+fn index<'a>(key: &Value, value: &'a Value) -> Result<&'a Value, String> {
+    fn throw<Key: Display, Value: Display>(key: Key, value: Value) -> String {
+        format!("could not index {key} with {value}")
+    }
+
+    match (key, value) {
+        (Value::String(key), Value::Table(t)) => {
+            t.get(key.as_ref()).ok_or_else(|| throw(key, "table"))
+        }
+        _ => Err(throw(key, value)),
+    }
+}
+
+fn evaluate_var(state: &mut ExecutionState, node: &Var) -> Evaluation<Value> {
+    let root = &node.root;
+    let Some(mut value) = read_variable(state, &root.name.text).1.cloned() else {
+        return Err(Issue {
+            why: format!("could not evaluate binding {}", root.name.text),
+            span: root.span,
+        });
+    };
+
+    for suffix in &node.suffixes {
+        match suffix {
+            ExpressionIndex(suffix) => {
+                let key = &suffix.node.value;
+
+                let new = index(&evaluate_expression(state, key)?, &value).map_err(|e| Issue {
+                    why: e,
+                    span: node.span,
+                })?;
+
+                value = new.clone()
+            }
+            NameIndex(suffix) => {
+                let key = &suffix.name.text;
+
+                let new =
+                    index(&Value::String(key.to_string().into()), &value).map_err(|e| Issue {
+                        why: e,
+                        span: node.span,
+                    })?;
+
+                value = new.clone()
+            }
+        }
+    }
+
+    Ok(value)
+}
+
+fn get_string_value(token: &Token) -> &str {
+    &token.text[1..token.text.len() - 1]
+}
+
+fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> Evaluation<Value> {
     match expression {
-        Expression::Boolean(node) => Value::Boolean(state.source.text(node.token) == "true"),
-        Expression::Nil(_) => Value::Nil,
-        Expression::Number(node) => Value::Number(state.source.text(node.token).parse().unwrap()),
-        Expression::String(node) => Value::String(state.source.text(node.token).into()),
-        Expression::Unary(node) => {
-            let result = evaluate_unary(state, node);
+        Expression::Boolean(node) => Ok(Value::Boolean(node.token.text == "true")),
+        Expression::Nil(_) => Ok(Value::Nil),
+        Expression::Number(node) => Ok(Value::Number(node.token.text.parse().unwrap())),
+        Expression::String(node) => Ok(Value::String(get_string_value(&node.token).into())),
+        Expression::Unary(node) => evaluate_unary(state, node),
 
-            match result {
-                Ok(r) => r,
-                Err(e) => {
-                    throw(state, e, node.span);
-                    Value::Nil
-                }
-            }
-        }
-        Expression::Binary(node) => {
-            let result = evaluate_binary(state, node);
+        Expression::Binary(node) => evaluate_binary(state, node),
 
-            match result {
-                Ok(r) => r,
-                Err(e) => {
-                    throw(state, e, node.span);
-                    Value::Nil
-                }
-            }
-        }
         Expression::Table(node) => {
             let mut table = HashMap::new();
 
@@ -169,56 +230,53 @@ fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> V
                         todo!()
                     }
                     TableField::NameKey(key) => table.insert(
-                        state.source.text(key.name).to_string(),
-                        evaluate_expression(state, &key.value),
+                        key.name.text.clone(),
+                        evaluate_expression(state, &key.value)?,
                     ),
                 };
             }
 
-            Value::Table(table)
+            Ok(Value::Table(table))
         }
+        Expression::Var(node) => evaluate_var(state, node),
     }
 }
 
 fn visit_stat_assign(state: &mut ExecutionState, assign: &Assign) {
-    let key = state.source.text(assign.identifier);
-    let value = evaluate_expression(state, &assign.value);
+    let key = assign.identifier.text.clone();
+    let value = evaluate_throw!(state, evaluate_expression(state, &assign.value));
 
-    write_variable(state, key.to_string(), value);
+    write_variable(state, key, value);
 }
 
-fn visit_service_target(state: &ExecutionState, target: &ServiceTarget) -> (Rc<str>, usize) {
-    let service = state.source.text(target.service).into();
+fn visit_service_target(target: &ServiceTarget) -> (Rc<str>, usize) {
+    let service = target.service.text.as_str().into();
     let port = target.port;
 
     (service, port)
 }
 
-fn evaluate_route(state: &mut ExecutionState, block: &Block, span: Span) -> HashMap<String, Value> {
+fn evaluate_route(state: &mut ExecutionState, block: &Block) -> Evaluation<HashMap<String, Value>> {
     let mut properties = HashMap::new();
 
-    let mut inherit = |name: &str| {
-        let (_, value) = read_variable(state, name);
+    let mut inherit = |name: &str| -> Evaluation<()> {
+        let value = read_variable(state, name).1.ok_or_else(|| Issue {
+            why: format!("required property {name} not declared"),
+            span: block.span,
+        })?;
 
-        if let Some(value) = value {
-            properties.insert(name.into(), value);
-        } else {
-            throw(
-                state,
-                format!("required property {name} not declared"),
-                span,
-            );
-        }
+        properties.insert(name.into(), value.clone());
+        Ok(())
     };
 
-    inherit("gateway");
-    inherit("entrypoint");
+    inherit("gateway")?;
+    inherit("entrypoint")?;
 
     for statement in &block.body {
         match statement {
             Statement::Assign(node) => {
-                let value = evaluate_expression(state, &node.value);
-                properties.insert(state.source.text(node.identifier).into(), value);
+                let value = evaluate_expression(state, &node.value)?;
+                properties.insert(node.identifier.text.clone(), value);
             }
             stat => {
                 throw(state, "expected assignment", stat.span());
@@ -226,7 +284,7 @@ fn evaluate_route(state: &mut ExecutionState, block: &Block, span: Span) -> Hash
         }
     }
 
-    return properties;
+    Ok(properties)
 }
 
 fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
@@ -240,8 +298,8 @@ fn visit_route_tcp(state: &mut ExecutionState, route: &RouteTCP) {
     );
     state.scope.up = Some(Box::new(parent));
 
-    let (service_target, port) = visit_service_target(state, &route.target);
-    let properties = evaluate_route(state, &route.properties, route.span);
+    let (service_target, port) = visit_service_target(&route.target);
+    let properties = evaluate_throw!(state, evaluate_route(state, &route.properties));
 
     let route = RawRoute {
         kind: RouteKind::TCP,
@@ -270,12 +328,12 @@ fn visit_route_http(state: &mut ExecutionState, route: &RouteHTTP) {
     );
     state.scope.up = Some(Box::new(parent));
 
-    let (service_target, port) = visit_service_target(state, &route.target);
-    let properties = evaluate_route(state, &route.properties, route.span);
+    let (service_target, port) = visit_service_target(&route.target);
+    let properties = evaluate_throw!(state, evaluate_route(state, &route.properties));
 
     let route = RawRoute {
         kind: RouteKind::HTTP,
-        hostname: Some(state.source.text(route.hostname).into()),
+        hostname: Some(get_string_value(&route.hostname).into()),
         service_target,
         port,
         span: route.span,
@@ -296,9 +354,9 @@ fn visit_stat_route(state: &mut ExecutionState, route: &Route) {
     }
 }
 
-fn visit_stat_var(state: &mut ExecutionState, var: &LetStatement) {
-    let name = state.source.text(var.root.name).to_string();
-    let value = evaluate_expression(state, &var.value);
+fn visit_stat_let(state: &mut ExecutionState, binding: &LetStatement) {
+    let name = binding.root.name.text.clone();
+    let value = evaluate_throw!(state, evaluate_expression(state, &binding.value));
 
     write_variable(state, name, value);
 }
@@ -320,7 +378,7 @@ fn visit_block(state: &mut ExecutionState, block: &Block, inherit: bool) {
         match statement {
             Statement::Assign(node) => visit_stat_assign(state, node),
             Statement::Route(node) => visit_stat_route(state, node),
-            Statement::Var(node) => visit_stat_var(state, node),
+            Statement::Let(node) => visit_stat_let(state, node),
         }
     }
 
@@ -329,9 +387,8 @@ fn visit_block(state: &mut ExecutionState, block: &Block, inherit: bool) {
     }
 }
 
-pub fn create_state<'a>(source: &'a Source) -> ExecutionState<'a> {
+pub fn create_state() -> ExecutionState {
     ExecutionState {
-        source,
         globals: HashMap::new(),
         scope: Scope {
             up: None,

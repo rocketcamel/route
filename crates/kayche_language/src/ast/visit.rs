@@ -16,7 +16,7 @@ pub trait Visitor<'a> {
         match statement {
             Statement::Assign(node) => self.visit_assign(node),
             Statement::Route(node) => self.visit_route(node),
-            Statement::Var(node) => self.visit_var(node),
+            Statement::Let(node) => self.visit_var(node),
         }
     }
 

@@ -3,7 +3,7 @@ mod error;
 mod output;
 
 use clap::{
-    Parser, Subcommand,
+    Parser as ClapParser, Subcommand,
     builder::{Styles, styling::AnsiColor},
 };
 use console::style;
@@ -11,7 +11,7 @@ use thiserror_ext::AsReport;
 
 use language::{
     analyze::analyze_routes,
-    ast::Parser as RtParser,
+    ast::Parser,
     treewalker::{self, execute, types::Source},
 };
 
@@ -26,7 +26,7 @@ const STYLES: Styles = Styles::styled()
     .valid(AnsiColor::Green.on_default().bold())
     .invalid(AnsiColor::Yellow.on_default().bold());
 
-#[derive(Parser, Debug)]
+#[derive(ClapParser, Debug)]
 #[command(styles = STYLES)]
 pub struct Args {
     #[command(subcommand)]
@@ -47,16 +47,22 @@ fn run() -> crate::error::Result<()> {
             let project = RouteConfig::read()?;
 
             let bytes = std::fs::read(&project.input.module_path)?;
-            let mut parser = RtParser::new(&bytes)?;
+            let mut parser = Parser::new(&bytes)?;
             let ast = parser.parse()?;
 
-            let source = Source {
-                source: bytes,
-                ast: ast,
-            };
+            println!("{:#?}", ast);
 
-            let vm = treewalker::create_state(&source);
-            let result = execute(vm, &source.ast);
+            // let mut display = display::Display {
+            //     source: Vec::new(),
+            //     line_length: 0,
+            //     pos: 0,
+            //     tbs: 0,
+            // };
+            // display.display_block(&ast.block);
+            // println!("{}", str::from_utf8(&display.source).unwrap());
+
+            let vm = treewalker::create_state();
+            let result = execute(vm, &ast);
 
             match result {
                 Ok(result) => {
