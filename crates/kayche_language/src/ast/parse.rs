@@ -394,15 +394,13 @@ impl<'a> Parser<'a> {
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
 
-        let name_span = name.span;
-        let equals_span = equals.span;
-        let value_span = value.span();
+        let span = to_span(&[Some(name.span), Some(equals.span), Some(value.span())]);
 
         Ok(TableFieldNameKey {
             name,
             equals,
             value,
-            span: to_span(&[Some(name_span), Some(equals_span), Some(value_span)]),
+            span,
         })
     }
 
@@ -463,15 +461,14 @@ impl<'a> Parser<'a> {
             Ok(values)
         })?;
 
-        let left_span = values.left.span;
-        let first_span = values.value.first().map(|v| v.span);
-        let last_span = values.value.last().map(|v| v.span);
-        let right_span = values.right.span;
+        let span = to_span(&[
+            Some(values.left.span),
+            values.value.first().map(|v| v.span),
+            values.value.last().map(|v| v.span),
+            Some(values.right.span),
+        ]);
 
-        Ok(Expression::Table(ExpressionTable {
-            values,
-            span: to_span(&[Some(left_span), first_span, last_span, Some(right_span)]),
-        }))
+        Ok(Expression::Table(ExpressionTable { values, span }))
     }
 
     fn current_binary_operator(&self) -> Option<BinaryOperator> {
@@ -612,15 +609,13 @@ impl<'a> Parser<'a> {
             let binop = self.consume()?;
             let rhs = self.parse_expression(Some(right_precedence))?;
 
-            let lhs_span = expr.span();
-            let rhs_span = rhs.span();
-            let binop_span = binop.span;
+            let span = to_span(&[Some(expr.span()), Some(binop.span), Some(rhs.span())]);
 
             expr = Expression::Binary(ExpressionBinary {
                 left: expr.into(),
                 operator: binop,
                 right: rhs.clone().into(),
-                span: to_span(&[Some(lhs_span), Some(binop_span), Some(rhs_span)]),
+                span,
             })
         }
 
@@ -651,13 +646,12 @@ impl<'a> Parser<'a> {
             let operator = self.expect(TokenKind::Period)?;
             let name = self.expect(TokenKind::Identifier)?;
 
-            let op_span = operator.span;
-            let name_span = name.span;
+            let span = to_span(&[Some(operator.span), Some(name.span)]);
 
             Ok(VarSuffix::NameIndex(VarSuffixNameIndex {
                 name,
                 period: operator,
-                span: to_span(&[Some(op_span), Some(name_span)]),
+                span,
             }))
         } else {
             unreachable!()
@@ -672,13 +666,12 @@ impl<'a> Parser<'a> {
             suffixes.push(self.parse_var_suffix()?);
         }
 
-        let root_span = root.span;
-        let suffix_span = suffixes.last().map(|s| s.span());
+        let span = to_span(&[Some(root.span), suffixes.last().map(|s| s.span())]);
 
         Ok(Var {
             root,
             suffixes,
-            span: to_span(&[Some(root_span), suffix_span]),
+            span,
         })
     }
 
@@ -688,15 +681,13 @@ impl<'a> Parser<'a> {
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
 
-        let root_span = root.span;
-        let equals_span = equals.span;
-        let value_span = value.span();
+        let span = to_span(&[Some(root.span), Some(equals.span), Some(value.span())]);
 
         Ok(LetStatement {
             root,
             equals,
             value,
-            span: to_span(&[Some(root_span), Some(equals_span), Some(value_span)]),
+            span,
         })
     }
 
@@ -705,15 +696,13 @@ impl<'a> Parser<'a> {
         let equals = self.expect(TokenKind::Equals)?;
         let value = self.parse_expression(None)?;
 
-        let value_span = value.span();
-        let identifier_span = identifier.span;
-        let equals_span = equals.span;
+        let span = to_span(&[Some(identifier.span), Some(equals.span), Some(value.span())]);
 
         Ok(Assign {
             identifier,
             equals,
             value: value.clone(),
-            span: to_span(&[Some(identifier_span), Some(equals_span), Some(value_span)]),
+            span,
         })
     }
 
@@ -721,7 +710,7 @@ impl<'a> Parser<'a> {
         let service = self.expect(TokenKind::Identifier)?;
         let equals = self.expect(TokenKind::Colon)?;
         let port_token = self.expect(TokenKind::Number)?;
-        let value = self.lexer.get(port_token.span.x, port_token.span.y);
+        let value = &port_token.text;
 
         let port = match value.parse::<usize>() {
             Ok(port) => port,
@@ -736,14 +725,13 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let service_span = service.span;
-        let equals_span = equals.span;
+        let span = to_span(&[Some(service.span), Some(equals.span), Some(port_token.span)]);
 
         Ok(ServiceTarget {
             service,
             equals,
             port,
-            span: to_span(&[Some(service_span), Some(equals_span), Some(port_token.span)]),
+            span,
         })
     }
 
@@ -770,13 +758,12 @@ impl<'a> Parser<'a> {
         let target = self.parse_service_target()?;
         let properties = self.parse_route_properties()?;
 
-        let target_span = target.span;
-        let properties_span = properties.span;
+        let span = to_span(&[Some(start.span), Some(target.span), Some(properties.span)]);
 
         Ok(RouteTCP {
             target,
             properties: properties.clone(),
-            span: to_span(&[Some(start.span), Some(target_span), Some(properties_span)]),
+            span,
         })
     }
 
@@ -786,20 +773,18 @@ impl<'a> Parser<'a> {
         let target = self.parse_service_target()?;
         let properties = self.parse_route_properties()?;
 
-        let target_span = target.span;
-        let properties_span = properties.span;
-        let hostname_span = hostname.span;
+        let span = to_span(&[
+            Some(hostname.span),
+            Some(equals.span),
+            Some(target.span),
+            Some(properties.span),
+        ]);
 
         Ok(RouteHTTP {
             hostname,
             target,
             properties: properties.clone(),
-            span: to_span(&[
-                Some(hostname_span),
-                Some(equals.span),
-                Some(target_span),
-                Some(properties_span),
-            ]),
+            span,
         })
     }
 

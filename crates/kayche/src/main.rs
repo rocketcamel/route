@@ -12,7 +12,7 @@ use thiserror_ext::AsReport;
 use language::{
     analyze::analyze_routes,
     ast::Parser,
-    treewalker::{self, execute, types::Source},
+    treewalker::{self, execute},
 };
 
 use crate::{config::RouteConfig, output::render_output};
