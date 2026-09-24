@@ -7,7 +7,7 @@ use crate::{
     ast::ast::{
         Assign, Ast, BinaryOperator, Block, Delimited, Expression, ExpressionBinary,
         ExpressionTable, ExpressionUnary, LetStatement, Route, RouteHTTP, RouteTCP, Separate,
-        ServiceTarget, SimpleExpression, Span, Statement, TableField, TableFieldNameKey,
+        Separated, ServiceTarget, SimpleExpression, Span, Statement, TableField, TableFieldNameKey,
         TableFieldNoKey, Token,
         TokenKind::{self, LBracket, RBracket},
         Var, VarRoot, VarSuffix, VarSuffixExpressionIndex, VarSuffixNameIndex,
@@ -278,6 +278,8 @@ impl<'a> Lexer<'a> {
 fn is_delimiter(kind: TokenKind) -> bool {
     return kind == TokenKind::LBrace
         || kind == TokenKind::RBrace
+        || kind == TokenKind::LBracket
+        || kind == TokenKind::RBracket
         || kind == TokenKind::Newline
         || kind == TokenKind::Eof;
 }
@@ -435,30 +437,47 @@ impl<'a> Parser<'a> {
         Ok(Delimited { left, value, right })
     }
 
+    fn parse_separator<T, F: FnMut(&mut Self) -> Result<T>>(
+        &mut self,
+        mut call: F,
+        delimiter: Option<TokenKind>,
+    ) -> Result<Separated<T>> {
+        let mut values = Vec::new();
+
+        while !is_delimiter(self.current_kind)
+            && !(delimiter.is_some() && self.current_is(delimiter.unwrap()))
+        {
+            let span_x = self.current_token.span.x;
+            let span_z = self.current_token.span.z;
+            let span_w = self.current_token.span.w;
+            let value = call(self)?;
+
+            let separator = if self.current_is(TokenKind::Comma) {
+                Some(self.expect(TokenKind::Comma)?)
+            } else {
+                None
+            };
+
+            let span_y = self.current_token.span.y;
+
+            values.push(Separate {
+                value,
+                separator,
+                span: Span {
+                    x: span_x,
+                    y: span_y,
+                    z: span_z,
+                    w: span_w,
+                },
+            });
+        }
+
+        Ok(values)
+    }
+
     fn parse_table(&mut self) -> Result<Expression> {
         let values = self.parse_delimiter(TokenKind::LBrace, TokenKind::RBrace, |parser| {
-            let mut values = Vec::new();
-
-            while !is_delimiter(parser.current_kind) {
-                let value = parser.parse_tablefield()?;
-
-                let separator = if parser.current_is(TokenKind::Comma) {
-                    Some(parser.expect(TokenKind::Comma)?)
-                } else {
-                    None
-                };
-
-                let separator_span = separator.as_ref().map(|s| s.span);
-                let span = value.span();
-
-                values.push(Separate {
-                    value,
-                    separator,
-                    span: to_span(&[Some(span), separator_span]),
-                });
-            }
-
-            Ok(values)
+            parser.parse_separator(|parser| parser.parse_tablefield(), None)
         })?;
 
         let span = to_span(&[
