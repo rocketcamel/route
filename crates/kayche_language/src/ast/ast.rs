@@ -42,6 +42,8 @@ pub enum TokenKind {
     RBrace,
     LBracket,
     RBracket,
+    LBracketSquare,
+    RBracketSquare,
     Colon,
     Identifier,
     String,
@@ -125,14 +127,36 @@ impl TryFrom<TokenKind> for BinaryOperator {
     }
 }
 
+impl From<BinaryOperator> for TokenKind {
+    fn from(value: BinaryOperator) -> Self {
+        match value {
+            BinaryOperator::BinaryEquals => TokenKind::BinaryEquals,
+            BinaryOperator::NEquals => TokenKind::NEquals,
+            BinaryOperator::Greater => TokenKind::Greater,
+            BinaryOperator::Less => TokenKind::Less,
+            BinaryOperator::GreaterEquals => TokenKind::GreaterEquals,
+            BinaryOperator::LessEquals => TokenKind::LessEquals,
+            BinaryOperator::Add => TokenKind::Add,
+            BinaryOperator::Subtract => TokenKind::Subtract,
+            BinaryOperator::Multiply => TokenKind::Multiply,
+            BinaryOperator::Divide => TokenKind::Divide,
+            BinaryOperator::Exponent => TokenKind::Exponent,
+            BinaryOperator::And => TokenKind::And,
+            BinaryOperator::Or => TokenKind::Or,
+        }
+    }
+}
+
 impl Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
             TokenKind::Arrow => "->",
             TokenKind::LBrace => "{",
             TokenKind::RBrace => "}",
-            TokenKind::LBracket => "[",
-            TokenKind::RBracket => "]",
+            TokenKind::LBracket => "(",
+            TokenKind::RBracket => ")",
+            TokenKind::LBracketSquare => "[",
+            TokenKind::RBracketSquare => "]",
             TokenKind::Colon => ":",
             TokenKind::Identifier => "identifier",
             TokenKind::String => "string",
@@ -180,19 +204,19 @@ impl Display for TokenKind {
 impl Display for BinaryOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
-            BinaryOperator::BinaryEquals => "compare ==",
-            BinaryOperator::NEquals => "compare !=",
-            BinaryOperator::Greater => "compare >",
-            BinaryOperator::Less => "compare <",
-            BinaryOperator::GreaterEquals => "compare >=",
-            BinaryOperator::LessEquals => "compare <=",
+            BinaryOperator::BinaryEquals => "==",
+            BinaryOperator::NEquals => "!=",
+            BinaryOperator::Greater => ">",
+            BinaryOperator::Less => "<",
+            BinaryOperator::GreaterEquals => ">=",
+            BinaryOperator::LessEquals => "<=",
             BinaryOperator::Add => "+",
             BinaryOperator::Subtract => "-",
             BinaryOperator::Multiply => "*",
             BinaryOperator::Divide => "/",
             BinaryOperator::Exponent => "^",
-            BinaryOperator::And => "compare &&",
-            BinaryOperator::Or => "compare ||",
+            BinaryOperator::And => "&&",
+            BinaryOperator::Or => "||",
         };
 
         write!(f, "{text}")
@@ -235,6 +259,7 @@ impl Display for Expression {
             Expression::Unary(_) => "unary expression",
             Expression::Table(_) => "table",
             Expression::Var(_) => "var",
+            Expression::Evaluate(_) => "evaluate expression",
         };
 
         write!(f, "{text}")
@@ -383,6 +408,12 @@ pub struct ExpressionUnary {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExpressionEvaluate {
+    pub value: Delimited<Box<Expression>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression {
     Boolean(SimpleExpression),
     Nil(SimpleExpression),
@@ -392,6 +423,7 @@ pub enum Expression {
     Unary(ExpressionUnary),
     Table(ExpressionTable),
     Var(Var),
+    Evaluate(ExpressionEvaluate),
 }
 
 #[derive(Debug, Clone)]

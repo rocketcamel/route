@@ -6,10 +6,10 @@ use std::{
 use crate::{
     ast::ast::{
         Assign, Ast, BinaryOperator, Block, Delimited, Expression, ExpressionBinary,
-        ExpressionTable, ExpressionUnary, LetStatement, Route, RouteHTTP, RouteTCP, Separate,
-        Separated, ServiceTarget, SimpleExpression, Span, Statement, TableField, TableFieldNameKey,
-        TableFieldNoKey, Token,
-        TokenKind::{self, LBracket, RBracket},
+        ExpressionEvaluate, ExpressionTable, ExpressionUnary, LetStatement, Route, RouteHTTP,
+        RouteTCP, Separate, Separated, ServiceTarget, SimpleExpression, Span, Statement,
+        TableField, TableFieldNameKey, TableFieldNoKey, Token,
+        TokenKind::{self, LBracketSquare, RBracketSquare},
         Var, VarRoot, VarSuffix, VarSuffixExpressionIndex, VarSuffixNameIndex,
     },
     error::{Error, Result},
@@ -123,13 +123,21 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 TokenKind::RBrace
             }
-            b'[' => {
+            b'(' => {
                 self.bump();
                 TokenKind::LBracket
             }
-            b']' => {
+            b')' => {
                 self.bump();
                 TokenKind::RBracket
+            }
+            b'[' => {
+                self.bump();
+                TokenKind::LBracketSquare
+            }
+            b']' => {
+                self.bump();
+                TokenKind::RBracketSquare
             }
             b':' => {
                 self.bump();
@@ -139,6 +147,7 @@ impl<'a> Lexer<'a> {
                 let c = self.bump_peek();
 
                 if c == b'=' {
+                    self.bump();
                     TokenKind::BinaryEquals
                 } else {
                     TokenKind::Equals
@@ -148,9 +157,31 @@ impl<'a> Lexer<'a> {
                 let c = self.bump_peek();
 
                 if c == b'=' {
+                    self.bump();
                     TokenKind::NEquals
                 } else {
                     TokenKind::Not
+                }
+            }
+            b'&' => {
+                let c = self.bump_peek();
+
+                if c == b'&' {
+                    self.bump();
+                    TokenKind::And
+                } else {
+                    self.bump();
+                    TokenKind::Error
+                }
+            }
+            b'|' => {
+                let c = self.bump_peek();
+
+                if c == b'|' {
+                    self.bump();
+                    TokenKind::Or
+                } else {
+                    TokenKind::Error
                 }
             }
             b'.' => {
@@ -161,6 +192,7 @@ impl<'a> Lexer<'a> {
                 let c = self.bump_peek();
 
                 if c == b'=' {
+                    self.bump();
                     TokenKind::GreaterEquals
                 } else {
                     TokenKind::Greater
@@ -170,6 +202,7 @@ impl<'a> Lexer<'a> {
                 let c = self.bump_peek();
 
                 if c == b'=' {
+                    self.bump();
                     TokenKind::LessEquals
                 } else {
                     TokenKind::Less
@@ -278,8 +311,8 @@ impl<'a> Lexer<'a> {
 fn is_delimiter(kind: TokenKind) -> bool {
     return kind == TokenKind::LBrace
         || kind == TokenKind::RBrace
-        || kind == TokenKind::LBracket
-        || kind == TokenKind::RBracket
+        || kind == TokenKind::LBracketSquare
+        || kind == TokenKind::RBracketSquare
         || kind == TokenKind::Newline
         || kind == TokenKind::Eof;
 }
@@ -295,6 +328,7 @@ impl Expression {
             Expression::Unary(n) => n.span,
             Expression::Table(n) => n.span,
             Expression::Var(n) => n.span,
+            Expression::Evaluate(n) => n.span,
         }
     }
 }
@@ -541,6 +575,15 @@ impl<'a> Parser<'a> {
                 let expression = self.parse_table()?;
                 Ok(expression)
             }
+            TokenKind::LBracket => {
+                let value =
+                    self.parse_delimiter(TokenKind::LBracket, TokenKind::RBracket, |parser| {
+                        parser.parse_expression(None).map(Box::new)
+                    })?;
+                let span = value.value.span();
+
+                Ok(Expression::Evaluate(ExpressionEvaluate { value, span }))
+            }
             TokenKind::Identifier => {
                 let var = self.parse_var_node()?;
                 Ok(Expression::Var(var))
@@ -584,10 +627,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary_operator(&mut self) -> Result<Option<Token>> {
-        if self.current_is(TokenKind::Negate) || self.current_is(TokenKind::Not) {
-            let result = self.consume()?;
-
-            Ok(Some(result))
+        if self.current_is(TokenKind::Subtract) || self.current_is(TokenKind::Not) {
+            Ok(Some(self.consume()?))
         } else {
             Ok(None)
         }
@@ -602,13 +643,12 @@ impl<'a> Parser<'a> {
         if let Some(unary_operator) = unary_operator {
             let rhs = self.parse_expression(Some(8))?;
 
-            let rhs_span = rhs.span();
-            let unary_operator_span = unary_operator.span;
+            let span = to_span(&[Some(unary_operator.span), Some(rhs.span())]);
 
             expr = Expression::Unary(ExpressionUnary {
                 operator: unary_operator,
                 value: rhs.into(),
-                span: to_span(&[Some(unary_operator_span), Some(rhs_span)]),
+                span,
             });
         } else {
             expr = self.parse_simple_expression()?
@@ -649,10 +689,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_var_suffix(&mut self) -> Result<VarSuffix> {
-        if self.current_is(TokenKind::Period) && self.lookahead_is(TokenKind::LBracket) {
+        if self.current_is(TokenKind::Period) && self.lookahead_is(TokenKind::LBracketSquare) {
             let operator = self.expect(TokenKind::Period)?;
-            let node =
-                self.parse_delimiter(LBracket, RBracket, |parser| parser.parse_expression(None))?;
+            let node = self.parse_delimiter(LBracketSquare, RBracketSquare, |parser| {
+                parser.parse_expression(None)
+            })?;
 
             let left_span = node.left.span;
 

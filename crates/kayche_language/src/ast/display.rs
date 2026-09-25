@@ -101,6 +101,11 @@ impl Display {
             Expression::Boolean(expr) => self.display_token(&expr.token),
             Expression::Nil(expr) => self.display_token(&expr.token),
             Expression::Var(expr) => self.display_var(expr),
+            Expression::Evaluate(expr) => {
+                self.display_delimited(&expr.value, |display, value| {
+                    display.display_expression(value)
+                });
+            }
         }
     }
 

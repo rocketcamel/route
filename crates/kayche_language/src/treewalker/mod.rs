@@ -239,6 +239,7 @@ fn evaluate_expression(state: &mut ExecutionState, expression: &Expression) -> E
             Ok(Value::Table(table))
         }
         Expression::Var(node) => evaluate_var(state, node),
+        Expression::Evaluate(node) => evaluate_expression(state, &node.value.value),
     }
 }
 
