@@ -210,7 +210,7 @@ impl<'a> Lexer<'a> {
                 loop {
                     c = self.bump_peek();
 
-                    if !is_alpha(c) {
+                    if !(is_alpha(c) || c.is_ascii_digit()) {
                         break;
                     }
                 }

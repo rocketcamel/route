@@ -11,7 +11,7 @@ use thiserror_ext::AsReport;
 
 use language::{
     analyze::analyze_routes,
-    ast::Parser,
+    ast::{Parser, display},
     treewalker::{self, execute},
 };
 
@@ -52,14 +52,14 @@ fn run() -> crate::error::Result<()> {
 
             println!("{:#?}", ast);
 
-            // let mut display = display::Display {
-            //     source: Vec::new(),
-            //     line_length: 0,
-            //     pos: 0,
-            //     tbs: 0,
-            // };
-            // display.display_block(&ast.block);
-            // println!("{}", str::from_utf8(&display.source).unwrap());
+            let mut display = display::Display {
+                source: Vec::new(),
+                line_length: 0,
+                pos: 0,
+                tbs: 0,
+            };
+            display.display_block(&ast.block);
+            println!("{}", str::from_utf8(&display.source).unwrap());
 
             let vm = treewalker::create_state();
             let result = execute(vm, &ast);

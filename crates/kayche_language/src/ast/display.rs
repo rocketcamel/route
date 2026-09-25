@@ -1,6 +1,7 @@
 use crate::ast::ast::{
     Assign, Block, Delimited, Expression, ExpressionTable, LetStatement, Route, RouteHTTP,
-    RouteTCP, Separated, ServiceTarget, Span, Statement, TableField, Token, TokenKind,
+    RouteTCP, Separated, ServiceTarget, Span, Statement, TableField, Token, TokenKind, Var,
+    VarRoot, VarSuffix,
 };
 
 #[allow(unused)]
@@ -30,7 +31,7 @@ impl Display {
         self.write_str(&"\t".repeat(self.tbs));
     }
 
-    pub fn display_token(&mut self, token: &Token) {
+    fn display_token(&mut self, token: &Token) {
         self.write_str(&token.text);
 
         match token.kind {
@@ -39,7 +40,7 @@ impl Display {
         }
     }
 
-    pub fn display_separated<T, F: FnMut(&mut Self, &T)>(
+    fn display_separated<T, F: FnMut(&mut Self, &T)>(
         &mut self,
         separated: &Separated<T>,
         mut call: F,
@@ -52,7 +53,7 @@ impl Display {
         }
     }
 
-    pub fn display_tablefield(&mut self, field: &TableField) {
+    fn display_tablefield(&mut self, field: &TableField) {
         match field {
             TableField::NameKey(field) => {
                 self.display_token(&field.name);
@@ -63,7 +64,7 @@ impl Display {
         }
     }
 
-    pub fn display_delimited<T, F: FnMut(&mut Self, &T)>(
+    fn display_delimited<T, F: FnMut(&mut Self, &T)>(
         &mut self,
         delimited: &Delimited<T>,
         mut call: F,
@@ -73,7 +74,7 @@ impl Display {
         self.display_token(&delimited.right);
     }
 
-    pub fn display_table(&mut self, table: &ExpressionTable) {
+    fn display_table(&mut self, table: &ExpressionTable) {
         self.display_delimited(&table.values, |display, separated| {
             display.display_separated(separated, |display, field| {
                 display.display_tablefield(&field)
@@ -81,7 +82,7 @@ impl Display {
         });
     }
 
-    pub fn display_expression(&mut self, expression: &Expression) {
+    fn display_expression(&mut self, expression: &Expression) {
         match expression {
             Expression::Binary(expr) => {
                 self.display_expression(&expr.left);
@@ -99,22 +100,46 @@ impl Display {
             Expression::Number(expr) => self.display_token(&expr.token),
             Expression::Boolean(expr) => self.display_token(&expr.token),
             Expression::Nil(expr) => self.display_token(&expr.token),
+            Expression::Var(expr) => self.display_var(expr),
         }
     }
 
-    pub fn display_assign(&mut self, stat: &Assign) {
+    fn display_assign(&mut self, stat: &Assign) {
         self.display_token(&stat.identifier);
         self.display_token(&stat.equals);
         self.display_expression(&stat.value);
     }
 
-    pub fn display_var(&mut self, var: &LetStatement) {
-        self.display_token(&var.root.var);
-        self.display_token(&var.root.name);
-        self.display_expression(&var.value);
+    fn display_var_suffix(&mut self, suffix: &VarSuffix) {
+        match suffix {
+            VarSuffix::ExpressionIndex(suffix) => {
+                self.display_token(&suffix.period);
+                self.display_delimited(&suffix.node, |display, node| {
+                    display.display_expression(node)
+                });
+            }
+            VarSuffix::NameIndex(suffix) => {
+                self.display_token(&suffix.period);
+                self.display_token(&suffix.name);
+            }
+        }
     }
 
-    pub fn display_service_target(&mut self, target: &ServiceTarget) {
+    fn display_var_root(&mut self, root: &VarRoot) {
+        self.display_token(&root.name);
+    }
+
+    fn display_var(&mut self, var: &Var) {
+        self.display_var_root(&var.root);
+
+        for suffix in &var.suffixes {
+            self.display_var_suffix(suffix);
+        }
+
+        self.write_char(b' ');
+    }
+
+    fn display_service_target(&mut self, target: &ServiceTarget) {
         self.display_token(&target.service);
         self.display_token(&target.equals);
         self.display_token(&Token {
@@ -129,31 +154,66 @@ impl Display {
         });
     }
 
-    pub fn display_route_http(&mut self, route: &RouteHTTP) {
+    fn display_route_http(&mut self, route: &RouteHTTP) {
         self.display_token(&route.hostname);
         self.display_service_target(&route.target);
+
+        self.write_char(b'{');
+        self.tbs += 1;
+
         self.display_block(&route.properties);
+        self.tbs -= 1;
+        self.write_char(b'}');
     }
 
-    pub fn display_route_tcp(&mut self, route: &RouteTCP) {
+    fn display_route_tcp(&mut self, route: &RouteTCP) {
         self.display_service_target(&route.target);
+        self.write_char(b'{');
+        self.tbs += 1;
+
         self.display_block(&route.properties);
+        self.tbs -= 1;
+        self.write_char(b'}');
     }
 
-    pub fn display_route(&mut self, route: &Route) {
+    fn display_route(&mut self, route: &Route) {
+        self.write_str("route ");
+
         match route {
             Route::HTTP(route) => self.display_route_http(route),
             Route::TCP(route) => self.display_route_tcp(route),
         }
     }
 
-    pub fn display_block(&mut self, block: &Block) {
+    fn display_stat_let(&mut self, stat: &LetStatement) {
+        self.write_str("let ");
+        self.display_var_root(&stat.root);
+        self.display_token(&stat.equals);
+        self.display_expression(&stat.value);
+    }
+
+    pub fn display_block(&mut self, block: &Block) -> String {
+        self.write_line();
+
         for statement in &block.body {
             match statement {
                 Statement::Assign(stat) => self.display_assign(stat),
-                Statement::Var(stat) => self.display_var(stat),
+                Statement::Let(stat) => self.display_stat_let(stat),
                 Statement::Route(stat) => self.display_route(stat),
             }
+
+            self.write_line();
+        }
+
+        String::from_utf8_lossy(&self.source).to_string()
+    }
+
+    pub fn create() -> Self {
+        Self {
+            pos: 0,
+            line_length: 0,
+            source: Vec::new(),
+            tbs: 0,
         }
     }
 }

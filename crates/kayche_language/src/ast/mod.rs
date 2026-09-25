@@ -1,5 +1,5 @@
 pub mod ast;
-// pub mod display;
+pub mod display;
 mod parse;
 mod visit;
 
