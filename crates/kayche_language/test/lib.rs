@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use kayche_language::ast::{
     Parser,
     ast::{
@@ -11,12 +13,15 @@ use kayche_language::ast::{
     display::Display,
 };
 
-use crate::ast_gen::Generator;
+use crate::{ast_gen::Generator, compare::Compare};
 
 mod ast_gen;
+mod compare;
 
 fn test_ast(input: &Ast) {
     let mut display = Display::create();
+    let mut compare = Compare::create();
+
     let s = display.display_block(&input.block);
     println!("{s}");
 
@@ -27,6 +32,17 @@ fn test_ast(input: &Ast) {
         Ok(ast) => ast,
         Err(error) => panic!("{error:?}"),
     };
+
+    let issues = compare.compare_ast(&input, &ast);
+
+    if issues.len() > 0 {
+        let issues_display = issues
+            .iter()
+            .map(|issue| format!("{} at {:#?}, {:#?}", issue.why, issue.a, issue.b))
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!("{issues_display}")
+    }
 }
 
 fn case_ast(block: Block) {
@@ -77,7 +93,7 @@ mod basic_expression_parsing {
         case_ast(GEN.block(vec![GEN.stat_let("test", GEN.expr_number(1234.0))]));
         case_ast(GEN.block(vec![GEN.stat_let(
             "test2",
-            GEN.expr_unary(GEN.token(TokenKind::Negate, "-"), GEN.expr_number(1234.0)),
+            GEN.expr_unary(GEN.token(TokenKind::Subtract, "-"), GEN.expr_number(1234.0)),
         )]));
     }
 
